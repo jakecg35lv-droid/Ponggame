@@ -57,7 +57,7 @@
     }
 
     .arcade-title span { color: var(--cyan); }
-    .game-nav { display: flex; gap: 6px; }
+    .game-nav { display: flex; flex-wrap: wrap; gap: 6px; }
     .game-nav button { color: var(--muted); background: transparent; }
     .game-nav button.active { color: #04100f; background: var(--cyan); border-color: var(--cyan); }
     [data-game-panel][hidden] { display: none; }
@@ -253,6 +253,31 @@
     .touch-down { grid-column: 2; grid-row: 2; }
     .touch-right { grid-column: 3; grid-row: 2; }
 
+    .reaction-zone {
+      width: 100%;
+      min-height: 480px;
+      margin: 16px 0;
+      display: grid;
+      place-items: center;
+      padding: 36px;
+      color: var(--ink);
+      text-align: center;
+      background: linear-gradient(145deg, #10172a, #0a0f1c);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      border-radius: 16px;
+      box-shadow: inset 0 0 80px rgba(156, 107, 255, 0.06);
+      cursor: pointer;
+      user-select: none;
+      transition: background 180ms ease, border-color 180ms ease, box-shadow 180ms ease;
+    }
+
+    .reaction-zone:hover { transform: none; }
+    .reaction-zone.waiting { background: linear-gradient(145deg, #3a1520, #180b12); border-color: rgba(255, 85, 122, 0.45); }
+    .reaction-zone.ready { background: linear-gradient(145deg, #0c594d, #082a27); border-color: rgba(66, 232, 224, 0.7); box-shadow: inset 0 0 110px rgba(66, 232, 224, 0.18); }
+    .reaction-zone.result { background: linear-gradient(145deg, #2b1f55, #12132d); border-color: rgba(156, 107, 255, 0.55); }
+    .reaction-message strong { display: block; font-size: clamp(2rem, 7vw, 5rem); line-height: 1; }
+    .reaction-message span { display: block; margin-top: 16px; color: var(--muted); font-size: 1rem; }
+
     @media (max-width: 640px) {
       body { padding: 10px; }
       .arcade-nav { align-items: stretch; flex-direction: column; }
@@ -266,6 +291,7 @@
       .button-row { width: 100%; }
       button { flex: 1; }
       .hint { line-height: 1.5; }
+      .reaction-zone { min-height: 330px; }
     }
 
     @media (prefers-reduced-motion: reduce) {
@@ -281,6 +307,7 @@
         <button class="active" type="button" data-game-link="pong" aria-current="page">Pong</button>
         <button type="button" data-game-link="breaker">Brick Breaker</button>
         <button type="button" data-game-link="snake">Snake</button>
+        <button type="button" data-game-link="reaction">Reaction Test</button>
       </div>
     </nav>
 
@@ -390,6 +417,32 @@
       <div class="button-row">
         <button class="primary" id="snakeStartButton" type="button">Start</button>
         <button id="snakeRestartButton" type="button">Restart</button>
+      </div>
+    </footer>
+  </main>
+
+  <main class="game-shell" data-game-panel="reaction" hidden>
+    <header class="topbar">
+      <h1 class="brand">Reaction <span class="violet">Test</span></h1>
+      <div class="scoreboard" aria-live="polite">
+        <span>Last</span><strong class="score" id="reactionLast">—</strong>
+        <span>Best</span><strong class="score" id="reactionBest">—</strong>
+        <span>Tries</span><strong class="score" id="reactionAttempts">0</strong>
+      </div>
+    </header>
+
+    <button class="reaction-zone" id="reactionZone" type="button" aria-describedby="reactionInstructions">
+      <span class="reaction-message">
+        <strong id="reactionTitle">Test your speed</strong>
+        <span id="reactionInstructions">Press Start, then react when the panel turns green.</span>
+      </span>
+    </button>
+
+    <footer class="controls">
+      <p class="hint"><strong>React:</strong> Click, tap, or press Space when the panel turns green</p>
+      <div class="button-row">
+        <button class="primary" id="reactionStartButton" type="button">Start Round</button>
+        <button id="reactionResetButton" type="button">Reset Session</button>
       </div>
     </footer>
   </main>
@@ -1277,6 +1330,141 @@
       updateStats();
       restartGame();
       requestAnimationFrame(loop);
+    })();
+  </script>
+  <script>
+    (() => {
+      'use strict';
+
+      const zone = document.getElementById('reactionZone');
+      const title = document.getElementById('reactionTitle');
+      const instructions = document.getElementById('reactionInstructions');
+      const lastElement = document.getElementById('reactionLast');
+      const bestElement = document.getElementById('reactionBest');
+      const attemptsElement = document.getElementById('reactionAttempts');
+      const startButton = document.getElementById('reactionStartButton');
+      const resetButton = document.getElementById('reactionResetButton');
+
+      let state = 'idle';
+      let timer = 0;
+      let readyAt = 0;
+      let lastTime = null;
+      let attempts = 0;
+      let bestTime = loadBestTime();
+
+      function loadBestTime() {
+        try {
+          const stored = Number.parseInt(localStorage.getItem('neonArcadeReactionBest') || '', 10);
+          return Number.isFinite(stored) ? stored : null;
+        } catch {
+          return null;
+        }
+      }
+
+      function saveBestTime() {
+        try {
+          localStorage.setItem('neonArcadeReactionBest', String(bestTime));
+        } catch {
+          // The reaction test remains playable when browser storage is unavailable.
+        }
+      }
+
+      function updateStats() {
+        lastElement.textContent = lastTime === null ? '—' : `${lastTime}ms`;
+        bestElement.textContent = bestTime === null ? '—' : `${bestTime}ms`;
+        attemptsElement.textContent = attempts;
+      }
+
+      function render(nextTitle, nextInstructions, visualState = '') {
+        title.textContent = nextTitle;
+        instructions.textContent = nextInstructions;
+        zone.className = `reaction-zone${visualState ? ` ${visualState}` : ''}`;
+      }
+
+      function cancelPendingRound(message = 'Press Start, then react when the panel turns green.') {
+        clearTimeout(timer);
+        timer = 0;
+        state = 'idle';
+        startButton.textContent = 'Start Round';
+        render('Test your speed', message);
+      }
+
+      function startRound() {
+        clearTimeout(timer);
+        state = 'waiting';
+        startButton.textContent = 'Waiting…';
+        render('Wait for green…', 'Do not click yet.', 'waiting');
+
+        const delay = 1500 + Math.random() * 3000;
+        timer = window.setTimeout(() => {
+          if (state !== 'waiting' || document.body.dataset.activeGame !== 'reaction') return;
+          state = 'ready';
+          readyAt = performance.now();
+          startButton.textContent = 'React!';
+          render('CLICK!', 'Click, tap, or press Space now.', 'ready');
+        }, delay);
+      }
+
+      function react() {
+        if (state === 'idle' || state === 'result' || state === 'early') {
+          startRound();
+          return;
+        }
+
+        if (state === 'waiting') {
+          clearTimeout(timer);
+          timer = 0;
+          state = 'early';
+          startButton.textContent = 'Try Again';
+          render('Too soon!', 'Wait until the panel turns green, then react.', 'waiting');
+          return;
+        }
+
+        if (state === 'ready') {
+          lastTime = Math.max(1, Math.round(performance.now() - readyAt));
+          attempts += 1;
+          if (bestTime === null || lastTime < bestTime) {
+            bestTime = lastTime;
+            saveBestTime();
+          }
+          state = 'result';
+          startButton.textContent = 'Next Round';
+          updateStats();
+          const rating = lastTime < 180 ? 'Lightning fast.' : lastTime < 240 ? 'Great reaction.' : lastTime < 320 ? 'Solid result.' : 'Keep practicing.';
+          render(`${lastTime} ms`, `${rating} Click again for another round.`, 'result');
+        }
+      }
+
+      function resetSession() {
+        lastTime = null;
+        attempts = 0;
+        updateStats();
+        cancelPendingRound('Your saved best time is preserved.');
+      }
+
+      zone.addEventListener('click', react);
+      startButton.addEventListener('click', () => {
+        if (state === 'ready' || state === 'waiting') react();
+        else startRound();
+      });
+      resetButton.addEventListener('click', resetSession);
+      window.addEventListener('keydown', (event) => {
+        if (document.body.dataset.activeGame !== 'reaction' || event.key !== ' ') return;
+        event.preventDefault();
+        react();
+      });
+      window.addEventListener('gamechange', (event) => {
+        if (event.detail !== 'reaction' && (state === 'waiting' || state === 'ready')) {
+          cancelPendingRound('Round canceled when you changed games.');
+        }
+      });
+      document.addEventListener('visibilitychange', () => {
+        if (document.hidden && (state === 'waiting' || state === 'ready')) {
+          cancelPendingRound('Round canceled when the page lost focus.');
+        }
+      });
+
+      updateStats();
     })();
   </script>
 </body>
