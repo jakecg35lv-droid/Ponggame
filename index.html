@@ -344,6 +344,12 @@
 
     .memory-status { margin: 0; color: var(--muted); font-size: 0.88rem; text-align: center; }
 
+    .runner-controls { display: flex; gap: 8px; }
+    .runner-control { min-width: 120px; touch-action: none; }
+    .runner-control.gas { color: #04100f; background: var(--cyan); border-color: var(--cyan); }
+    .runner-control.brake { color: #fff; background: rgba(255, 85, 122, 0.16); border-color: rgba(255, 85, 122, 0.45); }
+    .fuel-stat.low { color: var(--danger); }
+
     @media (max-width: 640px) {
       body { padding: 10px; }
       .arcade-nav { align-items: stretch; flex-direction: column; }
@@ -360,6 +366,8 @@
       .reaction-zone { min-height: 330px; }
       .memory-board { gap: 7px; }
       .memory-face { border-radius: 10px; }
+      .runner-controls { width: 100%; }
+      .runner-control { min-width: 0; flex: 1; }
     }
 
     @media (prefers-reduced-motion: reduce) {
@@ -377,6 +385,7 @@
         <button type="button" data-game-link="snake">Snake</button>
         <button type="button" data-game-link="reaction">Reaction Test</button>
         <button type="button" data-game-link="memory">Memory Match</button>
+        <button type="button" data-game-link="runner">Hill Runner</button>
       </div>
     </nav>
 
@@ -534,6 +543,40 @@
       <p class="hint"><strong>Goal:</strong> Match all eight pairs in as few moves as possible</p>
       <div class="button-row">
         <button class="primary" id="memoryRestartButton" type="button">New Game</button>
+      </div>
+    </footer>
+  </main>
+
+  <main class="game-shell" data-game-panel="runner" hidden>
+    <header class="topbar">
+      <h1 class="brand">Neon Hill <span>Runner</span></h1>
+      <div class="scoreboard" aria-live="polite">
+        <span>Distance</span><strong class="score" id="runnerDistance">0m</strong>
+        <span>Fuel</span><strong class="score fuel-stat" id="runnerFuel">100%</strong>
+        <span>Coins</span><strong class="score" id="runnerCoins">0</strong>
+        <span>Best</span><strong class="score" id="runnerBest">0m</strong>
+      </div>
+    </header>
+
+    <div class="canvas-wrap">
+      <canvas id="runnerGame" width="1000" height="600" aria-label="Neon Hill Runner game area"></canvas>
+      <div class="overlay" id="runnerOverlay">
+        <div class="overlay-card">
+          <h2 id="runnerOverlayTitle">Start your engine</h2>
+          <p id="runnerOverlayText">Use D or Right Arrow to accelerate.</p>
+        </div>
+      </div>
+    </div>
+
+    <footer class="controls">
+      <p class="hint"><strong>Drive:</strong> D / → gas and nose up · A / ← brake/reverse and nose down</p>
+      <div class="runner-controls">
+        <button class="runner-control brake" type="button" data-runner-control="brake">Brake / Reverse</button>
+        <button class="runner-control gas" type="button" data-runner-control="gas">Gas</button>
+      </div>
+      <div class="button-row">
+        <button class="primary" id="runnerStartButton" type="button">Start</button>
+        <button id="runnerRestartButton" type="button">Restart</button>
       </div>
     </footer>
   </main>
@@ -1761,6 +1804,418 @@
       });
 
       restartGame();
+    })();
+  </script>
+  <script>
+    (() => {
+      'use strict';
+
+      const canvas = document.getElementById('runnerGame');
+      const ctx = canvas.getContext('2d');
+      const distanceElement = document.getElementById('runnerDistance');
+      const fuelElement = document.getElementById('runnerFuel');
+      const coinsElement = document.getElementById('runnerCoins');
+      const bestElement = document.getElementById('runnerBest');
+      const overlay = document.getElementById('runnerOverlay');
+      const overlayTitle = document.getElementById('runnerOverlayTitle');
+      const overlayText = document.getElementById('runnerOverlayText');
+      const startButton = document.getElementById('runnerStartButton');
+      const restartButton = document.getElementById('runnerRestartButton');
+      const controlButtons = [...document.querySelectorAll('[data-runner-control]')];
+
+      const keys = new Set();
+      const touchControls = new Set();
+      const car = { x: 150, y: 350, vx: 0, vy: 0, angle: 0, angularVelocity: 0 };
+      let pickups = [];
+      let nextPickupX = 560;
+      let pickupIndex = 0;
+      let fuel = 100;
+      let coins = 0;
+      let distance = 0;
+      let bestDistance = loadBestDistance();
+      let grounded = true;
+      let running = false;
+      let ended = false;
+      let lastTime = performance.now();
+
+      function loadBestDistance() {
+        try {
+          return Number.parseInt(localStorage.getItem('neonArcadeRunnerBest') || '0', 10) || 0;
+        } catch {
+          return 0;
+        }
+      }
+
+      function saveBestDistance() {
+        try {
+          localStorage.setItem('neonArcadeRunnerBest', String(bestDistance));
+        } catch {
+          // The game remains playable when browser storage is unavailable.
+        }
+      }
+
+      function clamp(value, min, max) {
+        return Math.max(min, Math.min(max, value));
+      }
+
+      function normalizeAngle(angle) {
+        return Math.atan2(Math.sin(angle), Math.cos(angle));
+      }
+
+      function terrainY(worldX) {
+        const roughness = clamp(worldX / 9000, 0, 1);
+        return 438
+          + Math.sin(worldX * 0.004) * 54
+          + Math.sin(worldX * 0.0095 + 0.8) * 25
+          + Math.sin(worldX * 0.00145 - 0.4) * 32
+          + Math.sin(worldX * 0.0205) * 18 * roughness;
+      }
+
+      function groundData(worldX) {
+        const rear = terrainY(worldX - 38);
+        const front = terrainY(worldX + 38);
+        return {
+          y: (rear + front) / 2 - 43,
+          slope: Math.atan2(front - rear, 76)
+        };
+      }
+
+      function setOverlay(title, text, visible = true) {
+        overlayTitle.textContent = title;
+        overlayText.textContent = text;
+        overlay.classList.toggle('hidden', !visible);
+      }
+
+      function updateStats() {
+        distanceElement.textContent = `${distance}m`;
+        fuelElement.textContent = `${Math.ceil(fuel)}%`;
+        fuelElement.classList.toggle('low', fuel <= 20);
+        coinsElement.textContent = coins;
+        bestElement.textContent = `${bestDistance}m`;
+      }
+
+      function generatePickups() {
+        while (nextPickupX < car.x + 2600) {
+          const type = pickupIndex % 7 === 6 ? 'fuel' : 'coin';
+          pickups.push({
+            x: nextPickupX,
+            y: terrainY(nextPickupX) - (type === 'fuel' ? 82 : 68),
+            type,
+            collected: false
+          });
+          pickupIndex += 1;
+          nextPickupX += type === 'fuel' ? 360 : 230 + Math.random() * 80;
+        }
+        pickups = pickups.filter((pickup) => pickup.x > car.x - 700 && !pickup.collected);
+      }
+
+      function restartGame() {
+        const startGround = groundData(150);
+        car.x = 150;
+        car.y = startGround.y;
+        car.vx = 0;
+        car.vy = 0;
+        car.angle = startGround.slope;
+        car.angularVelocity = 0;
+        pickups = [];
+        nextPickupX = 560;
+        pickupIndex = 0;
+        fuel = 100;
+        coins = 0;
+        distance = 0;
+        grounded = true;
+        running = false;
+        ended = false;
+        keys.clear();
+        touchControls.clear();
+        generatePickups();
+        updateStats();
+        startButton.textContent = 'Start';
+        setOverlay('Start your engine', 'Use D or Right Arrow to accelerate.');
+        draw();
+      }
+
+      function startGame() {
+        if (ended) restartGame();
+        running = true;
+        startButton.textContent = 'Pause';
+        setOverlay('', '', false);
+        lastTime = performance.now();
+      }
+
+      function togglePause() {
+        running = !running;
+        startButton.textContent = running ? 'Pause' : 'Resume';
+        setOverlay('Paused', 'Press Space or Resume to keep driving.', !running);
+        lastTime = performance.now();
+      }
+
+      function endRun(reason) {
+        running = false;
+        ended = true;
+        car.vx = 0;
+        saveBestDistance();
+        startButton.textContent = 'Drive Again';
+        setOverlay(reason, `${distance}m traveled · ${coins} coins collected · Best ${bestDistance}m`);
+      }
+
+      function controlActive(name) {
+        if (name === 'gas') return keys.has('d') || keys.has('arrowright') || touchControls.has('gas');
+        return keys.has('a') || keys.has('arrowleft') || touchControls.has('brake');
+      }
+
+      function collectPickups() {
+        for (const pickup of pickups) {
+          if (pickup.collected) continue;
+          if (Math.hypot(car.x - pickup.x, car.y - pickup.y) > 54) continue;
+          pickup.collected = true;
+          if (pickup.type === 'fuel') fuel = Math.min(100, fuel + 36);
+          else coins += 1;
+        }
+      }
+
+      function update(delta) {
+        const gas = controlActive('gas');
+        const brake = controlActive('brake');
+
+        if (gas && fuel > 0) {
+          car.vx += (grounded ? 155 : 30) * delta;
+          fuel = Math.max(0, fuel - 3.4 * delta);
+        }
+        if (brake) {
+          car.vx -= (car.vx > 0 ? 225 : 85) * delta;
+        }
+
+        if (!gas && !brake && grounded) car.vx *= Math.pow(0.985, delta * 60);
+        car.vx = clamp(car.vx, -85, 285);
+        car.x = Math.max(0, car.x + car.vx * delta);
+
+        if (!grounded) {
+          if (gas && fuel > 0) car.angularVelocity -= 2.25 * delta;
+          if (brake) car.angularVelocity += 2.25 * delta;
+        }
+
+        car.vy += 720 * delta;
+        car.y += car.vy * delta;
+        car.angle += car.angularVelocity * delta;
+        car.angularVelocity *= Math.pow(0.992, delta * 60);
+
+        const ground = groundData(car.x);
+        const touchingGround = car.y >= ground.y && car.vy >= -35;
+        if (touchingGround) {
+          const impactSpeed = car.vy;
+          const landingAngle = Math.abs(normalizeAngle(car.angle - ground.slope));
+          if ((impactSpeed > 430 && landingAngle > 0.65) || landingAngle > 1.42) {
+            endRun('Hard landing');
+            return;
+          }
+          grounded = true;
+          car.y = ground.y;
+          car.vy = 0;
+          car.angle += normalizeAngle(ground.slope - car.angle) * Math.min(1, delta * 7.5);
+          car.angularVelocity *= 0.25;
+        } else {
+          grounded = false;
+        }
+
+        fuel = Math.max(0, fuel - 0.12 * delta);
+        distance = Math.max(distance, Math.floor((car.x - 150) / 10));
+        if (distance > bestDistance) {
+          bestDistance = distance;
+          if (bestDistance % 10 === 0) saveBestDistance();
+        }
+
+        generatePickups();
+        collectPickups();
+        updateStats();
+
+        if (fuel <= 0 && grounded && Math.abs(car.vx) < 5) endRun('Out of fuel');
+        if (car.y > canvas.height + 180) endRun('Vehicle lost');
+      }
+
+      function drawBackground(cameraX) {
+        const sky = ctx.createLinearGradient(0, 0, 0, canvas.height);
+        sky.addColorStop(0, '#070b18');
+        sky.addColorStop(0.68, '#17143a');
+        sky.addColorStop(1, '#26164a');
+        ctx.fillStyle = sky;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        ctx.fillStyle = 'rgba(255,255,255,0.55)';
+        for (let index = 0; index < 42; index += 1) {
+          const x = ((index * 197 - cameraX * 0.08) % 1100 + 1100) % 1100 - 50;
+          const y = 35 + ((index * 83) % 250);
+          ctx.fillRect(x, y, index % 4 === 0 ? 2 : 1, index % 4 === 0 ? 2 : 1);
+        }
+
+        ctx.beginPath();
+        ctx.moveTo(0, 470);
+        for (let x = 0; x <= canvas.width; x += 20) {
+          const world = cameraX * 0.25 + x;
+          const y = 390 + Math.sin(world * 0.003) * 45 + Math.sin(world * 0.008) * 20;
+          ctx.lineTo(x, y);
+        }
+        ctx.lineTo(canvas.width, canvas.height);
+        ctx.lineTo(0, canvas.height);
+        ctx.closePath();
+        ctx.fillStyle = 'rgba(86, 55, 160, 0.28)';
+        ctx.fill();
+      }
+
+      function drawTerrain(cameraX) {
+        ctx.beginPath();
+        ctx.moveTo(0, canvas.height);
+        for (let screenX = -20; screenX <= canvas.width + 20; screenX += 10) {
+          ctx.lineTo(screenX, terrainY(cameraX + screenX));
+        }
+        ctx.lineTo(canvas.width, canvas.height);
+        ctx.closePath();
+        const groundGradient = ctx.createLinearGradient(0, 300, 0, canvas.height);
+        groundGradient.addColorStop(0, '#172a3b');
+        groundGradient.addColorStop(1, '#09121c');
+        ctx.fillStyle = groundGradient;
+        ctx.fill();
+
+        ctx.beginPath();
+        for (let screenX = -20; screenX <= canvas.width + 20; screenX += 8) {
+          const y = terrainY(cameraX + screenX);
+          if (screenX === -20) ctx.moveTo(screenX, y);
+          else ctx.lineTo(screenX, y);
+        }
+        ctx.strokeStyle = '#42e8e0';
+        ctx.lineWidth = 4;
+        ctx.shadowColor = '#42e8e0';
+        ctx.shadowBlur = 16;
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+      }
+
+      function drawPickups(cameraX) {
+        for (const pickup of pickups) {
+          if (pickup.collected) continue;
+          const x = pickup.x - cameraX;
+          if (x < -50 || x > canvas.width + 50) continue;
+          ctx.save();
+          if (pickup.type === 'coin') {
+            ctx.shadowColor = '#ffd65a';
+            ctx.shadowBlur = 18;
+            ctx.fillStyle = '#ffd65a';
+            ctx.beginPath();
+            ctx.arc(x, pickup.y, 13, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = '#8b5e00';
+            ctx.font = 'bold 14px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('C', x, pickup.y + 1);
+          } else {
+            ctx.shadowColor = '#ff557a';
+            ctx.shadowBlur = 18;
+            ctx.fillStyle = '#ff557a';
+            ctx.beginPath();
+            ctx.roundRect(x - 16, pickup.y - 20, 32, 40, 7);
+            ctx.fill();
+            ctx.fillStyle = '#ffffff';
+            ctx.font = 'bold 16px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText('F', x, pickup.y + 1);
+          }
+          ctx.restore();
+        }
+      }
+
+      function drawCar(cameraX) {
+        const x = car.x - cameraX;
+        ctx.save();
+        ctx.translate(x, car.y);
+        ctx.rotate(car.angle);
+
+        ctx.fillStyle = '#9c6bff';
+        ctx.shadowColor = '#9c6bff';
+        ctx.shadowBlur = 18;
+        ctx.beginPath();
+        ctx.roundRect(-48, -22, 96, 36, 11);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+
+        ctx.fillStyle = '#162342';
+        ctx.beginPath();
+        ctx.moveTo(-18, -22);
+        ctx.lineTo(-4, -45);
+        ctx.lineTo(29, -45);
+        ctx.lineTo(41, -22);
+        ctx.closePath();
+        ctx.fill();
+
+        for (const wheelX of [-34, 34]) {
+          ctx.fillStyle = '#05070d';
+          ctx.beginPath();
+          ctx.arc(wheelX, 20, 16, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = '#42e8e0';
+          ctx.lineWidth = 4;
+          ctx.stroke();
+          ctx.fillStyle = '#9aa9bd';
+          ctx.beginPath();
+          ctx.arc(wheelX, 20, 5, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(44, -12, 8, 8);
+        ctx.restore();
+      }
+
+      function draw() {
+        const cameraX = Math.max(0, car.x - 270);
+        drawBackground(cameraX);
+        drawTerrain(cameraX);
+        drawPickups(cameraX);
+        drawCar(cameraX);
+      }
+
+      function loop(now) {
+        const delta = Math.min((now - lastTime) / 1000, 0.032);
+        lastTime = now;
+        if (running && document.body.dataset.activeGame === 'runner') update(delta);
+        draw();
+        requestAnimationFrame(loop);
+      }
+
+      window.addEventListener('keydown', (event) => {
+        if (document.body.dataset.activeGame !== 'runner') return;
+        const key = event.key.toLowerCase();
+        if (['a', 'd', 'arrowleft', 'arrowright', ' '].includes(key)) event.preventDefault();
+        if (key === ' ') running ? togglePause() : startGame();
+        else keys.add(key);
+      });
+      window.addEventListener('keyup', (event) => keys.delete(event.key.toLowerCase()));
+      controlButtons.forEach((button) => {
+        const control = button.dataset.runnerControl;
+        button.addEventListener('pointerdown', (event) => {
+          event.preventDefault();
+          touchControls.add(control);
+          if (!running) startGame();
+        });
+        button.addEventListener('pointerup', () => touchControls.delete(control));
+        button.addEventListener('pointercancel', () => touchControls.delete(control));
+        button.addEventListener('pointerleave', () => touchControls.delete(control));
+      });
+      window.addEventListener('pointerup', () => touchControls.clear());
+      startButton.addEventListener('click', () => running ? togglePause() : startGame());
+      restartButton.addEventListener('click', restartGame);
+      window.addEventListener('gamechange', (event) => {
+        keys.clear();
+        touchControls.clear();
+        if (event.detail !== 'runner' && running) togglePause();
+      });
+      document.addEventListener('visibilitychange', () => {
+        if (document.hidden && running) togglePause();
+      });
+
+      restartGame();
+      requestAnimationFrame(loop);
     })();
   </script>
 </body>
