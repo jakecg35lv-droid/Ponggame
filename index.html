@@ -278,6 +278,72 @@
     .reaction-message strong { display: block; font-size: clamp(2rem, 7vw, 5rem); line-height: 1; }
     .reaction-message span { display: block; margin-top: 16px; color: var(--muted); font-size: 1rem; }
 
+    .memory-board {
+      width: min(100%, 760px);
+      margin: 22px auto;
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      perspective: 1000px;
+    }
+
+    .memory-card {
+      aspect-ratio: 1;
+      padding: 0;
+      background: transparent;
+      border: 0;
+      border-radius: 14px;
+    }
+
+    .memory-card:hover { transform: none; background: transparent; }
+
+    .memory-card-inner {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      display: block;
+      transform-style: preserve-3d;
+      transition: transform 320ms ease;
+    }
+
+    .memory-card.flipped .memory-card-inner,
+    .memory-card.matched .memory-card-inner { transform: rotateY(180deg); }
+
+    .memory-face {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      backface-visibility: hidden;
+    }
+
+    .memory-front {
+      color: rgba(255, 255, 255, 0.38);
+      background: linear-gradient(145deg, #151d31, #0d1322);
+      font-size: clamp(1.2rem, 4vw, 2.2rem);
+    }
+
+    .memory-back {
+      color: #061311;
+      background: linear-gradient(145deg, #79fff6, #42e8e0);
+      border-color: rgba(66, 232, 224, 0.8);
+      box-shadow: 0 12px 34px rgba(66, 232, 224, 0.18);
+      font-size: clamp(1.7rem, 6vw, 3.4rem);
+      font-weight: 900;
+      transform: rotateY(180deg);
+    }
+
+    .memory-card.matched .memory-back {
+      color: #ffffff;
+      background: linear-gradient(145deg, #9c6bff, #6641bc);
+      border-color: rgba(156, 107, 255, 0.85);
+      box-shadow: 0 12px 34px rgba(156, 107, 255, 0.2);
+    }
+
+    .memory-status { margin: 0; color: var(--muted); font-size: 0.88rem; text-align: center; }
+
     @media (max-width: 640px) {
       body { padding: 10px; }
       .arcade-nav { align-items: stretch; flex-direction: column; }
@@ -292,6 +358,8 @@
       button { flex: 1; }
       .hint { line-height: 1.5; }
       .reaction-zone { min-height: 330px; }
+      .memory-board { gap: 7px; }
+      .memory-face { border-radius: 10px; }
     }
 
     @media (prefers-reduced-motion: reduce) {
@@ -308,6 +376,7 @@
         <button type="button" data-game-link="breaker">Brick Breaker</button>
         <button type="button" data-game-link="snake">Snake</button>
         <button type="button" data-game-link="reaction">Reaction Test</button>
+        <button type="button" data-game-link="memory">Memory Match</button>
       </div>
     </nav>
 
@@ -443,6 +512,28 @@
       <div class="button-row">
         <button class="primary" id="reactionStartButton" type="button">Start Round</button>
         <button id="reactionResetButton" type="button">Reset Session</button>
+      </div>
+    </footer>
+  </main>
+
+  <main class="game-shell" data-game-panel="memory" hidden>
+    <header class="topbar">
+      <h1 class="brand">Memory <span>Match</span></h1>
+      <div class="scoreboard" aria-live="polite">
+        <span>Moves</span><strong class="score" id="memoryMoves">0</strong>
+        <span>Pairs</span><strong class="score" id="memoryPairs">0/8</strong>
+        <span>Time</span><strong class="score" id="memoryTime">0:00</strong>
+        <span>Best</span><strong class="score" id="memoryBest">—</strong>
+      </div>
+    </header>
+
+    <div class="memory-board" id="memoryBoard" aria-label="Memory Match card grid"></div>
+    <p class="memory-status" id="memoryStatus" aria-live="polite">Choose any card to begin.</p>
+
+    <footer class="controls">
+      <p class="hint"><strong>Goal:</strong> Match all eight pairs in as few moves as possible</p>
+      <div class="button-row">
+        <button class="primary" id="memoryRestartButton" type="button">New Game</button>
       </div>
     </footer>
   </main>
@@ -1465,6 +1556,211 @@
       });
 
       updateStats();
+    })();
+  </script>
+  <script>
+    (() => {
+      'use strict';
+
+      const board = document.getElementById('memoryBoard');
+      const movesElement = document.getElementById('memoryMoves');
+      const pairsElement = document.getElementById('memoryPairs');
+      const timeElement = document.getElementById('memoryTime');
+      const bestElement = document.getElementById('memoryBest');
+      const statusElement = document.getElementById('memoryStatus');
+      const restartButton = document.getElementById('memoryRestartButton');
+      const values = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
+
+      let cards = [];
+      let firstIndex = null;
+      let moves = 0;
+      let pairs = 0;
+      let locked = false;
+      let active = false;
+      let finished = false;
+      let startedAt = 0;
+      let elapsedMs = 0;
+      let clockTimer = 0;
+      let revealTimer = 0;
+      let bestMoves = loadBestMoves();
+
+      function loadBestMoves() {
+        try {
+          const stored = Number.parseInt(localStorage.getItem('neonArcadeMemoryBestMoves') || '', 10);
+          return Number.isFinite(stored) ? stored : null;
+        } catch {
+          return null;
+        }
+      }
+
+      function saveBestMoves() {
+        try {
+          localStorage.setItem('neonArcadeMemoryBestMoves', String(bestMoves));
+        } catch {
+          // The game remains playable when browser storage is unavailable.
+        }
+      }
+
+      function shuffle(items) {
+        const copy = [...items];
+        for (let index = copy.length - 1; index > 0; index -= 1) {
+          const randomIndex = Math.floor(Math.random() * (index + 1));
+          [copy[index], copy[randomIndex]] = [copy[randomIndex], copy[index]];
+        }
+        return copy;
+      }
+
+      function formatTime(milliseconds) {
+        const seconds = Math.floor(milliseconds / 1000);
+        return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+      }
+
+      function currentElapsed() {
+        return active ? elapsedMs + performance.now() - startedAt : elapsedMs;
+      }
+
+      function updateStats() {
+        movesElement.textContent = moves;
+        pairsElement.textContent = `${pairs}/8`;
+        timeElement.textContent = formatTime(currentElapsed());
+        bestElement.textContent = bestMoves === null ? '—' : bestMoves;
+      }
+
+      function startClock() {
+        if (active || finished) return;
+        active = true;
+        startedAt = performance.now();
+        clearInterval(clockTimer);
+        clockTimer = window.setInterval(updateStats, 250);
+      }
+
+      function pauseClock() {
+        if (!active) return;
+        elapsedMs = currentElapsed();
+        active = false;
+        clearInterval(clockTimer);
+        clockTimer = 0;
+        updateStats();
+      }
+
+      function renderBoard() {
+        board.replaceChildren();
+        cards.forEach((card, index) => {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'memory-card';
+          button.dataset.memoryIndex = String(index);
+          button.setAttribute('aria-label', `Hidden card ${index + 1}`);
+          button.innerHTML = `
+            <span class="memory-card-inner">
+              <span class="memory-face memory-front" aria-hidden="true">?</span>
+              <span class="memory-face memory-back" aria-hidden="true">${card.value}</span>
+            </span>`;
+          button.addEventListener('click', () => chooseCard(index));
+          board.append(button);
+        });
+        syncCards();
+      }
+
+      function syncCards() {
+        cards.forEach((card, index) => {
+          const button = board.querySelector(`[data-memory-index="${index}"]`);
+          if (!button) return;
+          button.classList.toggle('flipped', card.flipped);
+          button.classList.toggle('matched', card.matched);
+          button.disabled = card.matched;
+          button.setAttribute('aria-label', card.flipped || card.matched
+            ? `Card ${index + 1}: ${card.value}${card.matched ? ', matched' : ''}`
+            : `Hidden card ${index + 1}`);
+        });
+      }
+
+      function finishGame() {
+        pauseClock();
+        finished = true;
+        if (bestMoves === null || moves < bestMoves) {
+          bestMoves = moves;
+          saveBestMoves();
+        }
+        updateStats();
+        statusElement.textContent = `Board cleared in ${moves} moves and ${formatTime(elapsedMs)}. Start a new game to play again.`;
+      }
+
+      function chooseCard(index) {
+        if (locked || finished) return;
+        const card = cards[index];
+        if (!card || card.flipped || card.matched) return;
+
+        startClock();
+        card.flipped = true;
+        syncCards();
+
+        if (firstIndex === null) {
+          firstIndex = index;
+          statusElement.textContent = 'Now find its matching card.';
+          return;
+        }
+
+        const previousIndex = firstIndex;
+        firstIndex = null;
+        moves += 1;
+        updateStats();
+
+        if (cards[previousIndex].value === card.value) {
+          cards[previousIndex].matched = true;
+          card.matched = true;
+          pairs += 1;
+          syncCards();
+          updateStats();
+          statusElement.textContent = 'Match found.';
+          if (pairs === values.length) finishGame();
+          return;
+        }
+
+        locked = true;
+        statusElement.textContent = 'Not a match. Remember their positions.';
+        revealTimer = window.setTimeout(() => {
+          cards[previousIndex].flipped = false;
+          card.flipped = false;
+          locked = false;
+          syncCards();
+          statusElement.textContent = 'Choose another card.';
+        }, 750);
+      }
+
+      function restartGame() {
+        clearTimeout(revealTimer);
+        clearInterval(clockTimer);
+        cards = shuffle([...values, ...values]).map((value) => ({ value, flipped: false, matched: false }));
+        firstIndex = null;
+        moves = 0;
+        pairs = 0;
+        locked = false;
+        active = false;
+        finished = false;
+        elapsedMs = 0;
+        clockTimer = 0;
+        revealTimer = 0;
+        renderBoard();
+        updateStats();
+        statusElement.textContent = 'Choose any card to begin.';
+      }
+
+      restartButton.addEventListener('click', restartGame);
+      window.addEventListener('gamechange', (event) => {
+        if (event.detail !== 'memory' && active) {
+          pauseClock();
+          statusElement.textContent = 'Game paused. Choose a card when you return.';
+        }
+      });
+      document.addEventListener('visibilitychange', () => {
+        if (document.hidden && active) {
+          pauseClock();
+          statusElement.textContent = 'Game paused while the page was hidden.';
+        }
+      });
+
+      restartGame();
     })();
   </script>
 </body>
