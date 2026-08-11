@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#070a12">
-  <title>Neon Pong</title>
+  <title>Neon Arcade</title>
   <style>
     :root {
       --ink: #f7fbff;
@@ -33,8 +33,37 @@
       font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
 
+    .arcade-app { width: min(100%, 1040px); }
+
+    .arcade-nav {
+      margin-bottom: 12px;
+      padding: 10px 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      background: rgba(14, 20, 34, 0.82);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.24);
+      backdrop-filter: blur(18px);
+    }
+
+    .arcade-title {
+      margin: 0;
+      font-size: 0.88rem;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+    }
+
+    .arcade-title span { color: var(--cyan); }
+    .game-nav { display: flex; gap: 6px; }
+    .game-nav button { color: var(--muted); background: transparent; }
+    .game-nav button.active { color: #04100f; background: var(--cyan); border-color: var(--cyan); }
+    [data-game-panel][hidden] { display: none; }
+
     .game-shell {
-      width: min(100%, 1040px);
+      width: 100%;
       padding: 18px;
       background: var(--panel);
       border: 1px solid var(--line);
@@ -59,6 +88,7 @@
     }
 
     .brand span { color: var(--cyan); }
+    .brand .violet { color: var(--violet); }
 
     .scoreboard {
       display: flex;
@@ -212,6 +242,9 @@
 
     @media (max-width: 640px) {
       body { padding: 10px; }
+      .arcade-nav { align-items: stretch; flex-direction: column; }
+      .game-nav { width: 100%; }
+      .game-nav button { flex: 1; }
       .game-shell { padding: 12px; border-radius: 18px; }
       .topbar, .controls { align-items: flex-start; flex-direction: column; }
       .settings { align-items: stretch; flex-direction: column; }
@@ -227,8 +260,17 @@
     }
   </style>
 </head>
-<body>
-  <main class="game-shell">
+<body data-active-game="pong">
+  <div class="arcade-app">
+    <nav class="arcade-nav" aria-label="Game navigation">
+      <p class="arcade-title">Neon <span>Arcade</span></p>
+      <div class="game-nav">
+        <button class="active" type="button" data-game-link="pong" aria-current="page">Pong</button>
+        <button type="button" data-game-link="breaker">Brick Breaker</button>
+      </div>
+    </nav>
+
+  <main class="game-shell" data-game-panel="pong">
     <header class="topbar">
       <h1 class="brand">Neon <span>Pong</span></h1>
       <div class="scoreboard" aria-live="polite">
@@ -274,6 +316,35 @@
       </div>
     </footer>
   </main>
+
+  <main class="game-shell" data-game-panel="breaker" hidden>
+    <header class="topbar">
+      <h1 class="brand">Brick <span class="violet">Breaker</span></h1>
+      <div class="scoreboard" aria-live="polite">
+        <span>Score</span><strong class="score" id="brickScore">0</strong>
+        <span>Lives</span><strong class="score" id="brickLives">3</strong>
+      </div>
+    </header>
+
+    <div class="canvas-wrap">
+      <canvas id="brickGame" width="1000" height="600" aria-label="Brick Breaker game area"></canvas>
+      <div class="overlay" id="brickOverlay">
+        <div class="overlay-card">
+          <h2 id="brickOverlayTitle">Break the wall</h2>
+          <p id="brickOverlayText">Press Space or Start to launch.</p>
+        </div>
+      </div>
+    </div>
+
+    <footer class="controls">
+      <p class="hint"><strong>Move:</strong> A / D, ← / →, mouse, or touch</p>
+      <div class="button-row">
+        <button class="primary" id="brickStartButton" type="button">Start</button>
+        <button id="brickRestartButton" type="button">Restart</button>
+      </div>
+    </footer>
+  </main>
+  </div>
 
   <script>
     (() => {
@@ -571,6 +642,7 @@
       }
 
       window.addEventListener('keydown', (event) => {
+        if (document.body.dataset.activeGame !== 'pong') return;
         const key = event.key.toLowerCase();
         if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', ' '].includes(key)) event.preventDefault();
         if (key === ' ') running ? togglePause() : startGame();
@@ -590,11 +662,306 @@
       document.addEventListener('visibilitychange', () => {
         if (document.hidden && running) togglePause();
       });
+      window.addEventListener('gamechange', (event) => {
+        keys.clear();
+        if (event.detail !== 'pong' && running) togglePause();
+      });
 
       updateSettingsUI();
       restartGame();
       cancelAnimationFrame(animationId);
       animationId = requestAnimationFrame(gameLoop);
+    })();
+  </script>
+  <script>
+    (() => {
+      'use strict';
+
+      const navButtons = [...document.querySelectorAll('[data-game-link]')];
+      const panels = [...document.querySelectorAll('[data-game-panel]')];
+
+      function showGame(gameName) {
+        document.body.dataset.activeGame = gameName;
+        panels.forEach((panel) => { panel.hidden = panel.dataset.gamePanel !== gameName; });
+        navButtons.forEach((button) => {
+          const active = button.dataset.gameLink === gameName;
+          button.classList.toggle('active', active);
+          if (active) button.setAttribute('aria-current', 'page');
+          else button.removeAttribute('aria-current');
+        });
+        window.dispatchEvent(new CustomEvent('gamechange', { detail: gameName }));
+      }
+
+      navButtons.forEach((button) => button.addEventListener('click', () => showGame(button.dataset.gameLink)));
+    })();
+  </script>
+
+  <script>
+    (() => {
+      'use strict';
+
+      const canvas = document.getElementById('brickGame');
+      const ctx = canvas.getContext('2d');
+      const scoreElement = document.getElementById('brickScore');
+      const livesElement = document.getElementById('brickLives');
+      const overlay = document.getElementById('brickOverlay');
+      const overlayTitle = document.getElementById('brickOverlayTitle');
+      const overlayText = document.getElementById('brickOverlayText');
+      const startButton = document.getElementById('brickStartButton');
+      const restartButton = document.getElementById('brickRestartButton');
+
+      const WIDTH = canvas.width;
+      const HEIGHT = canvas.height;
+      const PADDLE_WIDTH = 150;
+      const PADDLE_HEIGHT = 18;
+      const BALL_RADIUS = 10;
+      const BRICK_ROWS = 6;
+      const BRICK_COLUMNS = 10;
+      const BRICK_WIDTH = 82;
+      const BRICK_HEIGHT = 26;
+      const BRICK_GAP = 10;
+      const BRICK_LEFT = 45;
+      const BRICK_TOP = 58;
+      const COLORS = ['#42e8e0', '#68d8ff', '#8fa7ff', '#9c6bff', '#db70ff', '#ff557a'];
+
+      const paddle = { x: WIDTH / 2 - PADDLE_WIDTH / 2, y: HEIGHT - 48 };
+      const ball = { x: WIDTH / 2, y: HEIGHT - 72, vx: 0, vy: 0 };
+      const keys = new Set();
+      let bricks = [];
+      let score = 0;
+      let lives = 3;
+      let running = false;
+      let gameOver = false;
+      let lastTime = performance.now();
+
+      function clamp(value, min, max) {
+        return Math.max(min, Math.min(max, value));
+      }
+
+      function makeBricks() {
+        bricks = [];
+        for (let row = 0; row < BRICK_ROWS; row += 1) {
+          for (let column = 0; column < BRICK_COLUMNS; column += 1) {
+            bricks.push({
+              x: BRICK_LEFT + column * (BRICK_WIDTH + BRICK_GAP),
+              y: BRICK_TOP + row * (BRICK_HEIGHT + BRICK_GAP),
+              width: BRICK_WIDTH,
+              height: BRICK_HEIGHT,
+              color: COLORS[row],
+              alive: true
+            });
+          }
+        }
+      }
+
+      function updateStats() {
+        scoreElement.textContent = score;
+        livesElement.textContent = lives;
+      }
+
+      function setOverlay(title, text, visible = true) {
+        overlayTitle.textContent = title;
+        overlayText.textContent = text;
+        overlay.classList.toggle('hidden', !visible);
+      }
+
+      function resetBall() {
+        paddle.x = WIDTH / 2 - PADDLE_WIDTH / 2;
+        ball.x = WIDTH / 2;
+        ball.y = paddle.y - BALL_RADIUS - 4;
+        ball.vx = 0;
+        ball.vy = 0;
+      }
+
+      function launch() {
+        if (gameOver) restartGame();
+        if (ball.vx === 0 && ball.vy === 0) {
+          ball.vx = (Math.random() < 0.5 ? -1 : 1) * 330;
+          ball.vy = -430;
+        }
+        running = true;
+        startButton.textContent = 'Pause';
+        setOverlay('', '', false);
+        lastTime = performance.now();
+      }
+
+      function togglePause() {
+        running = !running;
+        startButton.textContent = running ? 'Pause' : 'Resume';
+        setOverlay('Paused', 'Press Space or Resume to continue.', !running);
+        lastTime = performance.now();
+      }
+
+      function restartGame() {
+        score = 0;
+        lives = 3;
+        gameOver = false;
+        running = false;
+        makeBricks();
+        resetBall();
+        updateStats();
+        startButton.textContent = 'Start';
+        setOverlay('Break the wall', 'Press Space or Start to launch.');
+        draw();
+      }
+
+      function loseLife() {
+        lives -= 1;
+        updateStats();
+        running = false;
+        resetBall();
+
+        if (lives <= 0) {
+          gameOver = true;
+          startButton.textContent = 'Play Again';
+          setOverlay('Game over', `Final score: ${score}. Press Play Again to retry.`);
+        } else {
+          startButton.textContent = 'Launch';
+          setOverlay('Ball lost', `${lives} ${lives === 1 ? 'life' : 'lives'} remaining. Press Space to launch.`);
+        }
+      }
+
+      function collideWithBricks() {
+        for (const brick of bricks) {
+          if (!brick.alive) continue;
+          const hit = ball.x + BALL_RADIUS > brick.x
+            && ball.x - BALL_RADIUS < brick.x + brick.width
+            && ball.y + BALL_RADIUS > brick.y
+            && ball.y - BALL_RADIUS < brick.y + brick.height;
+
+          if (!hit) continue;
+          brick.alive = false;
+          score += 10;
+          ball.vy *= -1;
+          updateStats();
+
+          if (bricks.every((item) => !item.alive)) {
+            running = false;
+            gameOver = true;
+            startButton.textContent = 'Play Again';
+            setOverlay('Wall cleared!', `Perfect run. Final score: ${score}.`);
+          }
+          break;
+        }
+      }
+
+      function update(delta) {
+        const paddleSpeed = 760;
+        if (keys.has('a') || keys.has('arrowleft')) paddle.x -= paddleSpeed * delta;
+        if (keys.has('d') || keys.has('arrowright')) paddle.x += paddleSpeed * delta;
+        paddle.x = clamp(paddle.x, 0, WIDTH - PADDLE_WIDTH);
+
+        ball.x += ball.vx * delta;
+        ball.y += ball.vy * delta;
+
+        if (ball.x - BALL_RADIUS <= 0) {
+          ball.x = BALL_RADIUS;
+          ball.vx = Math.abs(ball.vx);
+        } else if (ball.x + BALL_RADIUS >= WIDTH) {
+          ball.x = WIDTH - BALL_RADIUS;
+          ball.vx = -Math.abs(ball.vx);
+        }
+
+        if (ball.y - BALL_RADIUS <= 0) {
+          ball.y = BALL_RADIUS;
+          ball.vy = Math.abs(ball.vy);
+        }
+
+        const paddleHit = ball.vy > 0
+          && ball.y + BALL_RADIUS >= paddle.y
+          && ball.y - BALL_RADIUS <= paddle.y + PADDLE_HEIGHT
+          && ball.x >= paddle.x
+          && ball.x <= paddle.x + PADDLE_WIDTH;
+
+        if (paddleHit) {
+          const hitPosition = (ball.x - (paddle.x + PADDLE_WIDTH / 2)) / (PADDLE_WIDTH / 2);
+          const speed = Math.min(Math.hypot(ball.vx, ball.vy) + 12, 760);
+          ball.vx = hitPosition * speed * 0.86;
+          ball.vy = -Math.sqrt(Math.max(speed * speed - ball.vx * ball.vx, 1));
+          ball.y = paddle.y - BALL_RADIUS;
+        }
+
+        collideWithBricks();
+        if (ball.y - BALL_RADIUS > HEIGHT) loseLife();
+      }
+
+      function draw() {
+        const background = ctx.createLinearGradient(0, 0, WIDTH, HEIGHT);
+        background.addColorStop(0, '#080d18');
+        background.addColorStop(1, '#0d1021');
+        ctx.fillStyle = background;
+        ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+        for (const brick of bricks) {
+          if (!brick.alive) continue;
+          ctx.save();
+          ctx.shadowColor = brick.color;
+          ctx.shadowBlur = 12;
+          ctx.fillStyle = brick.color;
+          ctx.beginPath();
+          ctx.roundRect(brick.x, brick.y, brick.width, brick.height, 7);
+          ctx.fill();
+          ctx.restore();
+        }
+
+        ctx.save();
+        ctx.shadowColor = '#42e8e0';
+        ctx.shadowBlur = 18;
+        ctx.fillStyle = '#42e8e0';
+        ctx.beginPath();
+        ctx.roundRect(paddle.x, paddle.y, PADDLE_WIDTH, PADDLE_HEIGHT, 9);
+        ctx.fill();
+        ctx.restore();
+
+        ctx.save();
+        ctx.shadowColor = '#ffffff';
+        ctx.shadowBlur = 20;
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.arc(ball.x, ball.y, BALL_RADIUS, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+
+      function loop(now) {
+        const delta = Math.min((now - lastTime) / 1000, 0.025);
+        lastTime = now;
+        if (running && document.body.dataset.activeGame === 'breaker') update(delta);
+        draw();
+        requestAnimationFrame(loop);
+      }
+
+      function movePaddleTo(clientX) {
+        const rect = canvas.getBoundingClientRect();
+        const canvasX = (clientX - rect.left) * (WIDTH / rect.width);
+        paddle.x = clamp(canvasX - PADDLE_WIDTH / 2, 0, WIDTH - PADDLE_WIDTH);
+      }
+
+      window.addEventListener('keydown', (event) => {
+        if (document.body.dataset.activeGame !== 'breaker') return;
+        const key = event.key.toLowerCase();
+        if (['a', 'd', 'arrowleft', 'arrowright', ' '].includes(key)) event.preventDefault();
+        if (key === ' ') running ? togglePause() : launch();
+        keys.add(key);
+      });
+      window.addEventListener('keyup', (event) => keys.delete(event.key.toLowerCase()));
+      canvas.addEventListener('pointermove', (event) => movePaddleTo(event.clientX));
+      canvas.addEventListener('pointerdown', (event) => {
+        movePaddleTo(event.clientX);
+        if (!running) launch();
+      });
+      startButton.addEventListener('click', () => running ? togglePause() : launch());
+      restartButton.addEventListener('click', restartGame);
+      document.addEventListener('visibilitychange', () => {
+        if (document.hidden && running) togglePause();
+      });
+      window.addEventListener('gamechange', (event) => {
+        keys.clear();
+        if (event.detail !== 'breaker' && running) togglePause();
+      });
+
+      restartGame();
+      requestAnimationFrame(loop);
     })();
   </script>
 </body>
