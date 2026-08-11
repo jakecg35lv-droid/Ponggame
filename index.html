@@ -123,6 +123,51 @@
 
     .controls { color: var(--muted); }
 
+    .settings {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 16px;
+      padding: 12px;
+      background: rgba(255, 255, 255, 0.035);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+    }
+
+    .setting-group {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .setting-label {
+      color: var(--muted);
+      font-size: 0.68rem;
+      font-weight: 800;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }
+
+    .segmented { display: flex; gap: 4px; }
+
+    .segmented button {
+      padding: 8px 12px;
+      color: var(--muted);
+      background: transparent;
+    }
+
+    .segmented button.active {
+      color: #04100f;
+      background: var(--cyan);
+      border-color: var(--cyan);
+    }
+
+    .setting-group.disabled {
+      opacity: 0.38;
+      pointer-events: none;
+    }
+
     .hint {
       margin: 0;
       font-size: 0.82rem;
@@ -169,6 +214,8 @@
       body { padding: 10px; }
       .game-shell { padding: 12px; border-radius: 18px; }
       .topbar, .controls { align-items: flex-start; flex-direction: column; }
+      .settings { align-items: stretch; flex-direction: column; }
+      .setting-group { justify-content: space-between; }
       .scoreboard { width: 100%; justify-content: space-between; }
       .button-row { width: 100%; }
       button { flex: 1; }
@@ -185,9 +232,9 @@
     <header class="topbar">
       <h1 class="brand">Neon <span>Pong</span></h1>
       <div class="scoreboard" aria-live="polite">
-        <span>You</span><strong class="score" id="playerScore">0</strong>
-        <span>First to 7</span>
-        <strong class="score" id="computerScore">0</strong><span>CPU</span>
+        <span id="leftPlayerLabel">You</span><strong class="score" id="playerScore">0</strong>
+        <span id="matchLabel">First to 7</span>
+        <strong class="score" id="computerScore">0</strong><span id="rightPlayerLabel">CPU</span>
       </div>
     </header>
 
@@ -201,8 +248,26 @@
       </div>
     </div>
 
+    <section class="settings" aria-label="Game settings">
+      <div class="setting-group">
+        <span class="setting-label">Mode</span>
+        <div class="segmented" id="modeButtons">
+          <button class="active" type="button" data-mode="cpu">1 Player</button>
+          <button type="button" data-mode="pvp">2 Players</button>
+        </div>
+      </div>
+      <div class="setting-group" id="difficultyGroup">
+        <span class="setting-label">CPU Level</span>
+        <div class="segmented" id="difficultyButtons">
+          <button type="button" data-difficulty="easy">Easy</button>
+          <button class="active" type="button" data-difficulty="medium">Medium</button>
+          <button type="button" data-difficulty="hard">Hard</button>
+        </div>
+      </div>
+    </section>
+
     <footer class="controls">
-      <p class="hint"><strong>Move:</strong> W / S, ↑ / ↓, mouse, or touch</p>
+      <p class="hint" id="controlsHint"><strong>Move:</strong> W / S, arrow keys, mouse, or touch</p>
       <div class="button-row">
         <button class="primary" id="startButton" type="button">Start</button>
         <button id="restartButton" type="button">Restart</button>
@@ -223,6 +288,12 @@
       const restartButton = document.getElementById('restartButton');
       const playerScoreElement = document.getElementById('playerScore');
       const computerScoreElement = document.getElementById('computerScore');
+      const leftPlayerLabel = document.getElementById('leftPlayerLabel');
+      const rightPlayerLabel = document.getElementById('rightPlayerLabel');
+      const controlsHint = document.getElementById('controlsHint');
+      const modeButtons = [...document.querySelectorAll('[data-mode]')];
+      const difficultyButtons = [...document.querySelectorAll('[data-difficulty]')];
+      const difficultyGroup = document.getElementById('difficultyGroup');
 
       const WIDTH = canvas.width;
       const HEIGHT = canvas.height;
@@ -235,9 +306,16 @@
       const computer = { x: WIDTH - 34 - PADDLE_WIDTH, y: HEIGHT / 2 - PADDLE_HEIGHT / 2, score: 0 };
       const ball = { x: WIDTH / 2, y: HEIGHT / 2, vx: 0, vy: 0, speed: 560 };
       const keys = new Set();
+      const difficultySettings = {
+        easy: { speed: 300, error: 82, prediction: 0.00 },
+        medium: { speed: 470, error: 30, prediction: 0.08 },
+        hard: { speed: 720, error: 7, prediction: 0.20 }
+      };
 
       let running = false;
       let gameOver = false;
+      let gameMode = 'cpu';
+      let difficulty = 'medium';
       let lastTime = performance.now();
       let animationId = 0;
 
@@ -265,6 +343,43 @@
       function updateScoreboard() {
         playerScoreElement.textContent = player.score;
         computerScoreElement.textContent = computer.score;
+      }
+
+      function updateSettingsUI() {
+        modeButtons.forEach((button) => {
+          const active = button.dataset.mode === gameMode;
+          button.classList.toggle('active', active);
+          button.setAttribute('aria-pressed', String(active));
+        });
+
+        difficultyButtons.forEach((button) => {
+          const active = button.dataset.difficulty === difficulty;
+          button.classList.toggle('active', active);
+          button.setAttribute('aria-pressed', String(active));
+        });
+
+        const twoPlayer = gameMode === 'pvp';
+        difficultyGroup.classList.toggle('disabled', twoPlayer);
+        difficultyGroup.setAttribute('aria-disabled', String(twoPlayer));
+        leftPlayerLabel.textContent = twoPlayer ? 'P1' : 'You';
+        rightPlayerLabel.textContent = twoPlayer ? 'P2' : `CPU ${difficulty}`;
+        controlsHint.innerHTML = twoPlayer
+          ? '<strong>P1:</strong> W / A up, S / D down &nbsp; <strong>P2:</strong> ↑ / ↓'
+          : '<strong>Move:</strong> W / S, arrow keys, mouse, or touch';
+      }
+
+      function changeMode(nextMode) {
+        if (gameMode === nextMode) return;
+        gameMode = nextMode;
+        updateSettingsUI();
+        restartGame();
+      }
+
+      function changeDifficulty(nextDifficulty) {
+        if (difficulty === nextDifficulty || gameMode === 'pvp') return;
+        difficulty = nextDifficulty;
+        updateSettingsUI();
+        restartGame();
       }
 
       function startGame() {
@@ -315,7 +430,10 @@
           ball.vx = 0;
           ball.vy = 0;
           startButton.textContent = 'Play Again';
-          setOverlay(scoringPlayer === player ? 'You win!' : 'CPU wins', 'Press Play Again or Space for another match.');
+          const winner = scoringPlayer === player
+            ? (gameMode === 'pvp' ? 'Player 1 wins!' : 'You win!')
+            : (gameMode === 'pvp' ? 'Player 2 wins!' : 'CPU wins');
+          setOverlay(winner, 'Press Play Again or Space for another match.');
           return;
         }
 
@@ -323,7 +441,10 @@
         ball.vx = 0;
         ball.vy = 0;
         startButton.textContent = 'Serve';
-        setOverlay(scoringPlayer === player ? 'Point to you' : 'Point to CPU', 'Press Space or Serve for the next point.');
+        const scorer = scoringPlayer === player
+          ? (gameMode === 'pvp' ? 'Point to Player 1' : 'Point to you')
+          : (gameMode === 'pvp' ? 'Point to Player 2' : 'Point to CPU');
+        setOverlay(scorer, 'Press Space or Serve for the next point.');
       }
 
       function paddleCollision(paddle, isPlayer) {
@@ -347,14 +468,23 @@
 
       function update(delta) {
         const playerSpeed = 680;
-        if (keys.has('w') || keys.has('arrowup')) player.y -= playerSpeed * delta;
-        if (keys.has('s') || keys.has('arrowdown')) player.y += playerSpeed * delta;
+        const leftUp = keys.has('w') || keys.has('a') || (gameMode === 'cpu' && keys.has('arrowup'));
+        const leftDown = keys.has('s') || keys.has('d') || (gameMode === 'cpu' && keys.has('arrowdown'));
+        if (leftUp) player.y -= playerSpeed * delta;
+        if (leftDown) player.y += playerSpeed * delta;
         player.y = clamp(player.y, 0, HEIGHT - PADDLE_HEIGHT);
 
-        const target = ball.y - PADDLE_HEIGHT / 2;
-        const aiSpeed = 430 + Math.min(player.score * 18, 90);
-        const aiError = Math.sin(performance.now() / 620) * 20;
-        computer.y += clamp(target + aiError - computer.y, -aiSpeed * delta, aiSpeed * delta);
+        if (gameMode === 'pvp') {
+          if (keys.has('arrowup')) computer.y -= playerSpeed * delta;
+          if (keys.has('arrowdown')) computer.y += playerSpeed * delta;
+        } else {
+          const level = difficultySettings[difficulty];
+          const predictedY = ball.y + ball.vy * level.prediction;
+          const target = predictedY - PADDLE_HEIGHT / 2;
+          const aiError = Math.sin(performance.now() / 540) * level.error;
+          const movement = clamp(target + aiError - computer.y, -level.speed * delta, level.speed * delta);
+          computer.y += movement;
+        }
         computer.y = clamp(computer.y, 0, HEIGHT - PADDLE_HEIGHT);
 
         ball.x += ball.vx * delta;
@@ -442,7 +572,7 @@
 
       window.addEventListener('keydown', (event) => {
         const key = event.key.toLowerCase();
-        if (['w', 's', 'arrowup', 'arrowdown', ' '].includes(key)) event.preventDefault();
+        if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', ' '].includes(key)) event.preventDefault();
         if (key === ' ') running ? togglePause() : startGame();
         keys.add(key);
       });
@@ -455,10 +585,13 @@
       });
       startButton.addEventListener('click', () => running ? togglePause() : startGame());
       restartButton.addEventListener('click', restartGame);
+      modeButtons.forEach((button) => button.addEventListener('click', () => changeMode(button.dataset.mode)));
+      difficultyButtons.forEach((button) => button.addEventListener('click', () => changeDifficulty(button.dataset.difficulty)));
       document.addEventListener('visibilitychange', () => {
         if (document.hidden && running) togglePause();
       });
 
+      updateSettingsUI();
       restartGame();
       cancelAnimationFrame(animationId);
       animationId = requestAnimationFrame(gameLoop);
