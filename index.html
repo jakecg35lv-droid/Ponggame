@@ -348,6 +348,10 @@
     .runner-control { min-width: 120px; touch-action: none; }
     .runner-control.gas { color: #04100f; background: var(--cyan); border-color: var(--cyan); }
     .runner-control.brake { color: #fff; background: rgba(255, 85, 122, 0.16); border-color: rgba(255, 85, 122, 0.45); }
+    .runner-control.jump { color: #fff; background: rgba(156, 107, 255, 0.2); border-color: rgba(156, 107, 255, 0.62); }
+    .jump-stat.charging { color: var(--cyan); }
+    .jump-stat.power { color: #d8c5ff; }
+    .jump-stat.blocked { color: var(--danger); }
     .fuel-stat.low { color: var(--danger); }
 
     @media (max-width: 640px) {
@@ -554,6 +558,7 @@
         <span>Distance</span><strong class="score" id="runnerDistance">0m</strong>
         <span>Level</span><strong class="score" id="runnerLevel">1/10</strong>
         <span>Fuel</span><strong class="score fuel-stat" id="runnerFuel">100%</strong>
+        <span>Jump</span><strong class="score jump-stat" id="runnerJump">Ready</strong>
         <span>Coins</span><strong class="score" id="runnerCoins">0</strong>
         <span>Best</span><strong class="score" id="runnerBest">0m</strong>
       </div>
@@ -564,15 +569,16 @@
       <div class="overlay" id="runnerOverlay">
         <div class="overlay-card">
           <h2 id="runnerOverlayTitle">Start your engine</h2>
-          <p id="runnerOverlayText">Use D or Right Arrow to accelerate.</p>
+          <p id="runnerOverlayText">Drive with A / D or arrows. Tap Space for a 5% jump; hold 0.5 seconds for a 10% power jump.</p>
         </div>
       </div>
     </div>
 
     <footer class="controls">
-      <p class="hint"><strong>Drive:</strong> D / → gas and nose up · A / ← brake/reverse and nose down</p>
+      <p class="hint"><strong>Keyboard:</strong> D / → gas &amp; nose up · A / ← brake/reverse &amp; nose down · tap Space for a 5% jump · hold 0.5s for a 10% power jump · P pause<br><strong>Touch:</strong> Hold Gas or Brake to drive/tilt · tap Jump for 5% · hold Jump 0.5s for 10%</p>
       <div class="runner-controls">
         <button class="runner-control brake" type="button" data-runner-control="brake">Brake / Reverse</button>
+        <button class="runner-control jump" type="button" data-runner-control="jump">Jump</button>
         <button class="runner-control gas" type="button" data-runner-control="gas">Gas</button>
       </div>
       <div class="button-row">
@@ -1816,6 +1822,7 @@
       const distanceElement = document.getElementById('runnerDistance');
       const levelElement = document.getElementById('runnerLevel');
       const fuelElement = document.getElementById('runnerFuel');
+      const jumpElement = document.getElementById('runnerJump');
       const coinsElement = document.getElementById('runnerCoins');
       const bestElement = document.getElementById('runnerBest');
       const overlay = document.getElementById('runnerOverlay');
@@ -1826,6 +1833,9 @@
       const controlButtons = [...document.querySelectorAll('[data-runner-control]')];
       const LEVEL_DISTANCE = 300;
       const MAX_LEVEL = 10;
+      const POWER_JUMP_CHARGE_MS = 500;
+      const NORMAL_JUMP_FUEL = 5;
+      const POWER_JUMP_FUEL = 10;
 
       const keys = new Set();
       const touchControls = new Set();
@@ -1838,6 +1848,11 @@
       let distance = 0;
       let level = 1;
       let levelFlashUntil = 0;
+      let jumpCharging = false;
+      let jumpChargeStart = 0;
+      let jumpMessage = 'Ready';
+      let jumpMessageType = '';
+      let jumpMessageUntil = 0;
       let bestDistance = loadBestDistance();
       let grounded = true;
       let running = false;
@@ -1868,15 +1883,37 @@
         return Math.atan2(Math.sin(angle), Math.cos(angle));
       }
 
+      function levelDifficulty(levelNumber = level) {
+        const step = levelNumber - 1;
+        return {
+          acceleration: 164 - step * 6.5,
+          airAcceleration: 31 - step * 1.25,
+          brakeForce: 225 - step * 8,
+          reverseForce: 86 - step * 3,
+          topSpeed: 286 + step * 6,
+          gasBurn: 3.0 + step * 0.43,
+          idleBurn: 0.12 + step * 0.045,
+          airControl: 2.3 - step * 0.105,
+          groundGrip: 0.985 - step * 0.0017,
+          landingImpact: 540 - step * 23,
+          landingAngle: 1.28 - step * 0.07,
+          groundAlignment: 7.4 - step * 0.38,
+          fuelRestore: 34 - step * 1.65,
+          fuelEvery: 6 + Math.floor(step * 0.72),
+          pickupSpacing: step * 12
+        };
+      }
+
       function terrainY(worldX) {
         const terrainDistance = Math.max(0, (worldX - 150) / 10);
         const terrainLevel = clamp(Math.floor(terrainDistance / LEVEL_DISTANCE) + 1, 1, MAX_LEVEL);
-        const difficulty = (terrainLevel - 1) / (MAX_LEVEL - 1);
+        const step = terrainLevel - 1;
         return 438
-          + Math.sin(worldX * 0.004) * (44 + difficulty * 23)
-          + Math.sin(worldX * 0.0095 + 0.8) * (18 + difficulty * 23)
+          + Math.sin(worldX * 0.004) * (42 + step * 4.8)
+          + Math.sin(worldX * (0.0095 + step * 0.00012) + 0.8) * (17 + step * 3.8)
           + Math.sin(worldX * 0.00145 - 0.4) * 28
-          + Math.sin(worldX * 0.0205) * (7 + difficulty * 27);
+          + Math.sin(worldX * (0.0205 + step * 0.00035)) * (6 + step * 3.9)
+          + Math.sin(worldX * (0.034 + step * 0.00055) + 1.7) * (step * 1.8);
       }
 
       function groundData(worldX) {
@@ -1895,10 +1932,35 @@
       }
 
       function updateStats() {
+        const now = performance.now();
         distanceElement.textContent = `${distance}m`;
         levelElement.textContent = `${level}/${MAX_LEVEL}`;
         fuelElement.textContent = `${Math.ceil(fuel)}%`;
         fuelElement.classList.toggle('low', fuel <= 20);
+        jumpElement.classList.remove('charging', 'power', 'blocked');
+        if (jumpCharging) {
+          const charge = clamp((now - jumpChargeStart) / POWER_JUMP_CHARGE_MS, 0, 1);
+          if (charge >= 1 && fuel >= POWER_JUMP_FUEL) {
+            jumpElement.textContent = 'Power ready';
+            jumpElement.classList.add('power');
+          } else if (charge >= 1) {
+            jumpElement.textContent = 'Need 10%';
+            jumpElement.classList.add('blocked');
+          } else {
+            jumpElement.textContent = `Charge ${Math.round(charge * 100)}%`;
+            jumpElement.classList.add('charging');
+          }
+        } else if (now < jumpMessageUntil) {
+          jumpElement.textContent = jumpMessage;
+          if (jumpMessageType) jumpElement.classList.add(jumpMessageType);
+        } else if (!grounded) {
+          jumpElement.textContent = 'Airborne';
+        } else if (fuel < NORMAL_JUMP_FUEL) {
+          jumpElement.textContent = 'Need 5%';
+          jumpElement.classList.add('blocked');
+        } else {
+          jumpElement.textContent = 'Ready';
+        }
         coinsElement.textContent = coins;
         bestElement.textContent = `${bestDistance}m`;
       }
@@ -1907,7 +1969,8 @@
         while (nextPickupX < car.x + 2600) {
           const pickupDistance = Math.max(0, (nextPickupX - 150) / 10);
           const pickupLevel = clamp(Math.floor(pickupDistance / LEVEL_DISTANCE) + 1, 1, MAX_LEVEL);
-          const fuelEvery = 6 + Math.floor((pickupLevel - 1) / 3);
+          const pickupDifficulty = levelDifficulty(pickupLevel);
+          const fuelEvery = pickupDifficulty.fuelEvery;
           const type = (pickupIndex + 1) % fuelEvery === 0 ? 'fuel' : 'coin';
           pickups.push({
             x: nextPickupX,
@@ -1917,8 +1980,8 @@
           });
           pickupIndex += 1;
           nextPickupX += type === 'fuel'
-            ? 330 + pickupLevel * 10
-            : 205 + pickupLevel * 7 + Math.random() * 75;
+            ? 355 + pickupDifficulty.pickupSpacing
+            : 215 + pickupDifficulty.pickupSpacing + Math.random() * 85;
         }
         pickups = pickups.filter((pickup) => pickup.x > car.x - 700 && !pickup.collected);
       }
@@ -1939,6 +2002,11 @@
         distance = 0;
         level = 1;
         levelFlashUntil = 0;
+        jumpCharging = false;
+        jumpChargeStart = 0;
+        jumpMessage = 'Ready';
+        jumpMessageType = '';
+        jumpMessageUntil = 0;
         grounded = true;
         running = false;
         ended = false;
@@ -1947,7 +2015,7 @@
         generatePickups();
         updateStats();
         startButton.textContent = 'Start';
-        setOverlay('Level 1 of 10', 'Travel 300m to reach the next level.');
+        setOverlay('Level 1 of 10', 'Drive with A / D or arrows. Tap Space for a 5% jump; hold 0.5 seconds for a 10% power jump. Press P to pause.');
         draw();
       }
 
@@ -1960,10 +2028,12 @@
       }
 
       function togglePause() {
+        jumpCharging = false;
         running = !running;
         startButton.textContent = running ? 'Pause' : 'Resume';
-        setOverlay('Paused', 'Press Space or Resume to keep driving.', !running);
+        setOverlay('Paused', 'Press P or Resume to keep driving.', !running);
         lastTime = performance.now();
+        updateStats();
       }
 
       function endRun(reason) {
@@ -1980,12 +2050,58 @@
         return keys.has('a') || keys.has('arrowleft') || touchControls.has('brake');
       }
 
+      function showJumpMessage(message, type = '', duration = 900) {
+        jumpMessage = message;
+        jumpMessageType = type;
+        jumpMessageUntil = performance.now() + duration;
+        updateStats();
+      }
+
+      function beginJumpCharge() {
+        if (!running || ended) return;
+        if (jumpCharging) return;
+        if (!grounded) {
+          showJumpMessage('Airborne', 'blocked');
+          return;
+        }
+        if (fuel < NORMAL_JUMP_FUEL) {
+          showJumpMessage('Need 5%', 'blocked');
+          return;
+        }
+        jumpCharging = true;
+        jumpChargeStart = performance.now();
+        updateStats();
+      }
+
+      function releaseJump() {
+        if (!jumpCharging) return;
+        const heldFor = performance.now() - jumpChargeStart;
+        const powerJump = heldFor >= POWER_JUMP_CHARGE_MS;
+        const fuelCost = powerJump ? POWER_JUMP_FUEL : NORMAL_JUMP_FUEL;
+        jumpCharging = false;
+        if (!running || !grounded) {
+          showJumpMessage('Jump canceled', 'blocked');
+          return;
+        }
+        if (fuel < fuelCost) {
+          showJumpMessage(`Need ${fuelCost}%`, 'blocked');
+          return;
+        }
+
+        fuel = Math.max(0, fuel - fuelCost);
+        car.vy = powerJump ? -505 : -355;
+        car.vx += powerJump ? 105 : 38;
+        car.angularVelocity += powerJump ? -0.18 : -0.08;
+        grounded = false;
+        showJumpMessage(powerJump ? 'Power jump' : 'Normal jump', powerJump ? 'power' : 'charging', 700);
+      }
+
       function collectPickups() {
         for (const pickup of pickups) {
           if (pickup.collected) continue;
           if (Math.hypot(car.x - pickup.x, car.y - pickup.y) > 54) continue;
           pickup.collected = true;
-          if (pickup.type === 'fuel') fuel = Math.min(100, fuel + Math.max(22, 37 - level * 1.5));
+          if (pickup.type === 'fuel') fuel = Math.min(100, fuel + levelDifficulty().fuelRestore);
           else coins += 1;
         }
       }
@@ -1993,22 +2109,23 @@
       function update(delta) {
         const gas = controlActive('gas');
         const brake = controlActive('brake');
+        const difficulty = levelDifficulty();
 
         if (gas && fuel > 0) {
-          car.vx += (grounded ? 155 : 30) * delta;
-          fuel = Math.max(0, fuel - (2.7 + level * 0.25) * delta);
+          car.vx += (grounded ? difficulty.acceleration : difficulty.airAcceleration) * delta;
+          fuel = Math.max(0, fuel - difficulty.gasBurn * delta);
         }
         if (brake) {
-          car.vx -= (car.vx > 0 ? 225 : 85) * delta;
+          car.vx -= (car.vx > 0 ? difficulty.brakeForce : difficulty.reverseForce) * delta;
         }
 
-        if (!gas && !brake && grounded) car.vx *= Math.pow(0.985, delta * 60);
-        car.vx = clamp(car.vx, -85, 285);
+        if (!gas && !brake && grounded) car.vx *= Math.pow(difficulty.groundGrip, delta * 60);
+        car.vx = clamp(car.vx, -85, difficulty.topSpeed);
         car.x = Math.max(0, car.x + car.vx * delta);
 
         if (!grounded) {
-          if (gas && fuel > 0) car.angularVelocity -= 2.25 * delta;
-          if (brake) car.angularVelocity += 2.25 * delta;
+          if (gas && fuel > 0) car.angularVelocity -= difficulty.airControl * delta;
+          if (brake) car.angularVelocity += difficulty.airControl * delta;
         }
 
         car.vy += 720 * delta;
@@ -2021,22 +2138,22 @@
         if (touchingGround) {
           const impactSpeed = car.vy;
           const landingAngle = Math.abs(normalizeAngle(car.angle - ground.slope));
-          const impactLimit = 450 - (level - 1) * 15;
-          const angleLimit = 1.5 - (level - 1) * 0.04;
-          if ((impactSpeed > impactLimit && landingAngle > 0.55) || landingAngle > angleLimit) {
+          const impactLimit = difficulty.landingImpact;
+          const angleLimit = difficulty.landingAngle;
+          if (impactSpeed > impactLimit || landingAngle > angleLimit) {
             endRun('Hard landing');
             return;
           }
           grounded = true;
           car.y = ground.y;
           car.vy = 0;
-          car.angle += normalizeAngle(ground.slope - car.angle) * Math.min(1, delta * 7.5);
+          car.angle += normalizeAngle(ground.slope - car.angle) * Math.min(1, delta * difficulty.groundAlignment);
           car.angularVelocity *= 0.25;
         } else {
           grounded = false;
         }
 
-        fuel = Math.max(0, fuel - (0.1 + level * 0.02) * delta);
+        fuel = Math.max(0, fuel - difficulty.idleBurn * delta);
         distance = Math.max(distance, Math.floor((car.x - 150) / 10));
         const nextLevel = clamp(Math.floor(distance / LEVEL_DISTANCE) + 1, 1, MAX_LEVEL);
         if (nextLevel > level) {
@@ -2207,7 +2324,7 @@
           ctx.fillText(`LEVEL ${level}`, canvas.width / 2, 78);
           ctx.fillStyle = '#ffffff';
           ctx.font = '600 13px sans-serif';
-          ctx.fillText('Terrain and fuel difficulty increased', canvas.width / 2, 98);
+          ctx.fillText('Rougher terrain · scarcer fuel · stricter landings', canvas.width / 2, 98);
           ctx.restore();
         }
       }
@@ -2223,21 +2340,37 @@
       window.addEventListener('keydown', (event) => {
         if (document.body.dataset.activeGame !== 'runner') return;
         const key = event.key.toLowerCase();
-        if (['a', 'd', 'arrowleft', 'arrowright', ' '].includes(key)) event.preventDefault();
-        if (key === ' ') running ? togglePause() : startGame();
-        else keys.add(key);
+        if (['a', 'd', 'arrowleft', 'arrowright', ' ', 'p'].includes(key)) event.preventDefault();
+        if (key === 'p') {
+          if (!ended && !event.repeat) running ? togglePause() : startGame();
+        } else if (key === ' ') {
+          if (!event.repeat) beginJumpCharge();
+        } else keys.add(key);
       });
-      window.addEventListener('keyup', (event) => keys.delete(event.key.toLowerCase()));
+      window.addEventListener('keyup', (event) => {
+        const key = event.key.toLowerCase();
+        if (document.body.dataset.activeGame !== 'runner') return;
+        if (key === ' ') {
+          event.preventDefault();
+          releaseJump();
+        } else keys.delete(key);
+      });
       controlButtons.forEach((button) => {
         const control = button.dataset.runnerControl;
         button.addEventListener('pointerdown', (event) => {
           event.preventDefault();
-          touchControls.add(control);
-          if (!running) startGame();
+          if (control === 'jump') beginJumpCharge();
+          else {
+            touchControls.add(control);
+            if (!running) startGame();
+          }
         });
-        button.addEventListener('pointerup', () => touchControls.delete(control));
-        button.addEventListener('pointercancel', () => touchControls.delete(control));
-        button.addEventListener('pointerleave', () => touchControls.delete(control));
+        button.addEventListener('pointerup', () => control === 'jump' ? releaseJump() : touchControls.delete(control));
+        button.addEventListener('pointercancel', () => {
+          if (control === 'jump') jumpCharging = false;
+          else touchControls.delete(control);
+        });
+        button.addEventListener('pointerleave', () => control === 'jump' ? releaseJump() : touchControls.delete(control));
       });
       window.addEventListener('pointerup', () => touchControls.clear());
       startButton.addEventListener('click', () => running ? togglePause() : startGame());
@@ -2245,6 +2378,7 @@
       window.addEventListener('gamechange', (event) => {
         keys.clear();
         touchControls.clear();
+        jumpCharging = false;
         if (event.detail !== 'runner' && running) togglePause();
       });
       document.addEventListener('visibilitychange', () => {
