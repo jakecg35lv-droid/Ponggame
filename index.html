@@ -354,6 +354,21 @@
     .jump-stat.blocked { color: var(--danger); }
     .fuel-stat.low { color: var(--danger); }
 
+    .dash-controls {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(54px, 76px));
+      grid-template-rows: repeat(2, 42px);
+      gap: 6px;
+      touch-action: none;
+    }
+
+    .dash-control { padding: 0; touch-action: manipulation; }
+    .dash-control.up { grid-column: 2; }
+    .dash-control.left { grid-column: 1; grid-row: 2; }
+    .dash-control.down { grid-column: 2; grid-row: 2; }
+    .dash-control.right { grid-column: 3; grid-row: 2; }
+    .dash-control.action { color: #04100f; background: var(--cyan); border-color: var(--cyan); }
+
     @media (max-width: 640px) {
       body { padding: 10px; }
       .arcade-nav { align-items: stretch; flex-direction: column; }
@@ -372,6 +387,7 @@
       .memory-face { border-radius: 10px; }
       .runner-controls { width: 100%; }
       .runner-control { min-width: 0; flex: 1; }
+      .dash-controls { align-self: center; }
     }
 
     @media (prefers-reduced-motion: reduce) {
@@ -390,6 +406,7 @@
         <button type="button" data-game-link="reaction">Reaction Test</button>
         <button type="button" data-game-link="memory">Memory Match</button>
         <button type="button" data-game-link="runner">Hill Runner</button>
+        <button type="button" data-game-link="temple">Temple Dash</button>
       </div>
     </nav>
 
@@ -587,6 +604,43 @@
       </div>
     </footer>
   </main>
+
+  <main class="game-shell" data-game-panel="temple" hidden>
+    <header class="topbar">
+      <h1 class="brand">Neon Temple <span>Dash</span></h1>
+      <div class="scoreboard" aria-live="polite">
+        <span>Distance</span><strong class="score" id="templeDistance">0m</strong>
+        <span>Coins</span><strong class="score" id="templeCoins">0</strong>
+        <span>Level</span><strong class="score" id="templeLevel">1</strong>
+        <span>Best</span><strong class="score" id="templeBest">0m</strong>
+      </div>
+    </header>
+
+    <div class="canvas-wrap">
+      <canvas id="templeGame" width="1000" height="600" aria-label="Neon Temple Dash endless runner game area"></canvas>
+      <div class="overlay" id="templeOverlay">
+        <div class="overlay-card">
+          <h2 id="templeOverlayTitle">Enter the temple</h2>
+          <p id="templeOverlayText">Dodge traps, collect coins, and run as far as you can.</p>
+        </div>
+      </div>
+    </div>
+
+    <footer class="controls">
+      <p class="hint"><strong>Move:</strong> A / D or ← / → lanes · W / ↑ / Space jump · S / ↓ slide · P pause</p>
+      <div class="dash-controls" aria-label="Temple Dash touch controls">
+        <button class="dash-control up action" type="button" data-temple-control="up" aria-label="Jump">Jump</button>
+        <button class="dash-control left" type="button" data-temple-control="left" aria-label="Move left">Left</button>
+        <button class="dash-control down" type="button" data-temple-control="down" aria-label="Slide">Slide</button>
+        <button class="dash-control right" type="button" data-temple-control="right" aria-label="Move right">Right</button>
+      </div>
+      <div class="button-row">
+        <button class="primary" id="templeStartButton" type="button">Start</button>
+        <button id="templeRestartButton" type="button">Restart</button>
+      </div>
+    </footer>
+  </main>
+  </div>
   </div>
 
   <script>
@@ -2386,6 +2440,441 @@
       });
 
       restartGame();
+      requestAnimationFrame(loop);
+    })();
+  </script>
+  <script>
+    (() => {
+      'use strict';
+
+      const canvas = document.getElementById('templeGame');
+      const ctx = canvas.getContext('2d');
+      const distanceElement = document.getElementById('templeDistance');
+      const coinsElement = document.getElementById('templeCoins');
+      const levelElement = document.getElementById('templeLevel');
+      const bestElement = document.getElementById('templeBest');
+      const overlay = document.getElementById('templeOverlay');
+      const overlayTitle = document.getElementById('templeOverlayTitle');
+      const overlayText = document.getElementById('templeOverlayText');
+      const startButton = document.getElementById('templeStartButton');
+      const restartButton = document.getElementById('templeRestartButton');
+      const touchButtons = [...document.querySelectorAll('[data-temple-control]')];
+
+      const WIDTH = canvas.width;
+      const HEIGHT = canvas.height;
+      const HORIZON = 145;
+      const LANES = [-1, 0, 1];
+      const STORAGE_KEY = 'neonTempleDashBest';
+      let lane = 0;
+      let visualLane = 0;
+      let jumpHeight = 0;
+      let jumpVelocity = 0;
+      let slideTimer = 0;
+      let distance = 0;
+      let coins = 0;
+      let level = 1;
+      let speed = 0.29;
+      let spawnTimer = 0;
+      let objects = [];
+      let particles = [];
+      let running = false;
+      let ended = false;
+      let lastTime = performance.now();
+      let best = loadBest();
+
+      function loadBest() {
+        try { return Number(localStorage.getItem(STORAGE_KEY)) || 0; }
+        catch (error) { return 0; }
+      }
+
+      function saveBest() {
+        try { localStorage.setItem(STORAGE_KEY, String(best)); }
+        catch (error) { /* Game remains playable without browser storage. */ }
+      }
+
+      function updateHud() {
+        distanceElement.textContent = `${Math.floor(distance)}m`;
+        coinsElement.textContent = coins;
+        levelElement.textContent = level;
+        bestElement.textContent = `${best}m`;
+      }
+
+      function roadPoint(lanePosition, progress) {
+        const eased = progress * progress;
+        const roadHalf = 78 + eased * 410;
+        return {
+          x: WIDTH / 2 + lanePosition * roadHalf * 0.58,
+          y: HORIZON + eased * (HEIGHT - HORIZON + 35),
+          scale: 0.12 + eased * 1.12,
+          half: roadHalf
+        };
+      }
+
+      function resetGame() {
+        lane = 0;
+        visualLane = 0;
+        jumpHeight = 0;
+        jumpVelocity = 0;
+        slideTimer = 0;
+        distance = 0;
+        coins = 0;
+        level = 1;
+        speed = 0.29;
+        spawnTimer = 0.35;
+        objects = [];
+        particles = [];
+        running = false;
+        ended = false;
+        overlayTitle.textContent = 'Enter the temple';
+        overlayText.textContent = 'Dodge traps, collect coins, and run as far as you can.';
+        overlay.classList.remove('hidden');
+        startButton.textContent = 'Start';
+        updateHud();
+        draw();
+      }
+
+      function startGame() {
+        if (ended) resetGame();
+        running = true;
+        overlay.classList.add('hidden');
+        startButton.textContent = 'Pause';
+        lastTime = performance.now();
+      }
+
+      function togglePause() {
+        if (ended) return;
+        running = !running;
+        overlayTitle.textContent = 'Paused';
+        overlayText.textContent = 'Press P or Resume when you are ready.';
+        overlay.classList.toggle('hidden', running);
+        startButton.textContent = running ? 'Pause' : 'Resume';
+        lastTime = performance.now();
+      }
+
+      function move(direction) {
+        if (!running) startGame();
+        lane = Math.max(-1, Math.min(1, lane + direction));
+      }
+
+      function jump() {
+        if (!running) startGame();
+        if (jumpHeight === 0 && slideTimer <= 0) jumpVelocity = 760;
+      }
+
+      function slide() {
+        if (!running) startGame();
+        if (jumpHeight < 10) slideTimer = 0.72;
+      }
+
+      function spawnRow() {
+        const obstacleLane = LANES[Math.floor(Math.random() * LANES.length)];
+        const roll = Math.random();
+        const type = roll < 0.4 ? 'block' : roll < 0.72 ? 'barrier' : 'arch';
+        objects.push({ lane: obstacleLane, progress: 0, type, checked: false });
+
+        const safeLanes = LANES.filter((value) => value !== obstacleLane);
+        const coinLane = safeLanes[Math.floor(Math.random() * safeLanes.length)];
+        const coinCount = 2 + Math.min(3, Math.floor(level / 3));
+        for (let index = 0; index < coinCount; index += 1) {
+          objects.push({ lane: coinLane, progress: -0.12 * index, type: 'coin', checked: false });
+        }
+
+        if (level >= 4 && Math.random() < Math.min(0.58, level * 0.045)) {
+          const secondLane = safeLanes.find((value) => value !== coinLane) ?? safeLanes[0];
+          objects.push({ lane: secondLane, progress: -0.05, type: Math.random() < 0.55 ? 'barrier' : 'block', checked: false });
+        }
+      }
+
+      function crash() {
+        running = false;
+        ended = true;
+        const finalDistance = Math.floor(distance);
+        if (finalDistance > best) {
+          best = finalDistance;
+          saveBest();
+        }
+        updateHud();
+        overlayTitle.textContent = 'Run over';
+        overlayText.textContent = `You ran ${finalDistance}m and collected ${coins} coins.`;
+        overlay.classList.remove('hidden');
+        startButton.textContent = 'Run Again';
+      }
+
+      function burst(object) {
+        const point = roadPoint(object.lane, object.progress);
+        for (let index = 0; index < 8; index += 1) {
+          particles.push({
+            x: point.x,
+            y: point.y - 32,
+            vx: (Math.random() - 0.5) * 160,
+            vy: -40 - Math.random() * 130,
+            life: 0.45 + Math.random() * 0.25
+          });
+        }
+      }
+
+      function update(delta) {
+        level = Math.min(20, Math.floor(distance / 450) + 1);
+        speed = Math.min(0.72, 0.29 + (level - 1) * 0.018 + distance * 0.000018);
+        distance += speed * delta * 83;
+        visualLane += (lane - visualLane) * Math.min(1, delta * 13);
+
+        if (jumpVelocity !== 0 || jumpHeight > 0) {
+          jumpHeight += jumpVelocity * delta;
+          jumpVelocity -= 1680 * delta;
+          if (jumpHeight <= 0) {
+            jumpHeight = 0;
+            jumpVelocity = 0;
+          }
+        }
+        slideTimer = Math.max(0, slideTimer - delta);
+
+        spawnTimer -= delta;
+        if (spawnTimer <= 0) {
+          spawnRow();
+          spawnTimer = Math.max(0.68, 1.3 - level * 0.025) + Math.random() * 0.32;
+        }
+
+        objects.forEach((object) => {
+          object.progress += speed * delta;
+          if (!object.checked && object.progress >= 0.82) {
+            object.checked = true;
+            if (object.lane !== lane) return;
+            if (object.type === 'coin') {
+              coins += 1;
+              burst(object);
+              object.collected = true;
+              return;
+            }
+            const avoided = object.type === 'barrier'
+              ? jumpHeight > 68
+              : object.type === 'arch'
+                ? slideTimer > 0
+                : false;
+            if (!avoided) crash();
+          }
+        });
+        objects = objects.filter((object) => object.progress < 1.12 && !object.collected);
+
+        particles.forEach((particle) => {
+          particle.x += particle.vx * delta;
+          particle.y += particle.vy * delta;
+          particle.vy += 360 * delta;
+          particle.life -= delta;
+        });
+        particles = particles.filter((particle) => particle.life > 0);
+
+        if (Math.floor(distance) > best) best = Math.floor(distance);
+        updateHud();
+      }
+
+      function drawBackground() {
+        const sky = ctx.createLinearGradient(0, 0, 0, HEIGHT);
+        sky.addColorStop(0, '#120829');
+        sky.addColorStop(0.58, '#10203a');
+        sky.addColorStop(1, '#071019');
+        ctx.fillStyle = sky;
+        ctx.fillRect(0, 0, WIDTH, HEIGHT);
+
+        ctx.fillStyle = 'rgba(156, 107, 255, 0.18)';
+        ctx.beginPath();
+        ctx.arc(WIDTH / 2, HORIZON - 16, 92, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#9c6bff';
+        ctx.lineWidth = 4;
+        ctx.strokeRect(WIDTH / 2 - 76, 58, 152, 112);
+        ctx.strokeRect(WIDTH / 2 - 55, 80, 110, 90);
+
+        ctx.fillStyle = '#0a1220';
+        for (let index = 0; index < 7; index += 1) {
+          const x = index * 175 - 25;
+          const height = 90 + (index % 3) * 30;
+          ctx.fillRect(x, HORIZON - height, 90, height + 18);
+          ctx.fillStyle = 'rgba(66, 232, 224, 0.2)';
+          ctx.fillRect(x + 18, HORIZON - height + 22, 10, 28);
+          ctx.fillStyle = '#0a1220';
+        }
+
+        ctx.fillStyle = '#111a2a';
+        ctx.beginPath();
+        ctx.moveTo(WIDTH / 2 - 78, HORIZON);
+        ctx.lineTo(WIDTH / 2 + 78, HORIZON);
+        ctx.lineTo(WIDTH + 60, HEIGHT);
+        ctx.lineTo(-60, HEIGHT);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.strokeStyle = 'rgba(66, 232, 224, 0.28)';
+        ctx.lineWidth = 3;
+        [-1.5, -0.5, 0.5, 1.5].forEach((divider) => {
+          const top = roadPoint(divider / 1.5, 0);
+          const bottom = roadPoint(divider / 1.5, 1);
+          ctx.beginPath();
+          ctx.moveTo(top.x, HORIZON);
+          ctx.lineTo(bottom.x, HEIGHT);
+          ctx.stroke();
+        });
+
+        const offset = (distance * 0.025) % 0.12;
+        for (let progress = offset; progress < 1; progress += 0.12) {
+          const point = roadPoint(0, progress);
+          ctx.strokeStyle = `rgba(156, 107, 255, ${0.08 + progress * 0.22})`;
+          ctx.beginPath();
+          ctx.moveTo(WIDTH / 2 - point.half, point.y);
+          ctx.lineTo(WIDTH / 2 + point.half, point.y);
+          ctx.stroke();
+        }
+      }
+
+      function drawObject(object) {
+        if (object.progress < 0) return;
+        const point = roadPoint(object.lane, object.progress);
+        const size = 46 * point.scale;
+        ctx.save();
+        ctx.translate(point.x, point.y);
+
+        if (object.type === 'coin') {
+          ctx.shadowBlur = 18 * point.scale;
+          ctx.shadowColor = '#ffd166';
+          ctx.fillStyle = '#ffd166';
+          ctx.beginPath();
+          ctx.ellipse(0, -size * 0.8, size * 0.3, size * 0.48, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = '#7a4810';
+          ctx.font = `900 ${Math.max(5, size * 0.42)}px sans-serif`;
+          ctx.textAlign = 'center';
+          ctx.fillText('N', 0, -size * 0.66);
+        } else if (object.type === 'barrier') {
+          ctx.fillStyle = '#ff557a';
+          ctx.shadowBlur = 16 * point.scale;
+          ctx.shadowColor = '#ff557a';
+          ctx.fillRect(-size * 0.72, -size * 0.78, size * 1.44, size * 0.78);
+          ctx.fillStyle = '#ffd4dd';
+          ctx.fillRect(-size * 0.58, -size * 0.56, size * 1.16, size * 0.12);
+        } else if (object.type === 'arch') {
+          ctx.strokeStyle = '#9c6bff';
+          ctx.lineWidth = Math.max(3, size * 0.2);
+          ctx.shadowBlur = 15 * point.scale;
+          ctx.shadowColor = '#9c6bff';
+          ctx.beginPath();
+          ctx.moveTo(-size * 0.68, 0);
+          ctx.lineTo(-size * 0.68, -size * 1.42);
+          ctx.lineTo(size * 0.68, -size * 1.42);
+          ctx.lineTo(size * 0.68, 0);
+          ctx.stroke();
+        } else {
+          ctx.fillStyle = '#42e8e0';
+          ctx.shadowBlur = 18 * point.scale;
+          ctx.shadowColor = '#42e8e0';
+          ctx.fillRect(-size * 0.62, -size * 1.32, size * 1.24, size * 1.32);
+          ctx.fillStyle = '#092322';
+          ctx.fillRect(-size * 0.28, -size * 0.92, size * 0.56, size * 0.54);
+        }
+        ctx.restore();
+      }
+
+      function drawPlayer() {
+        const point = roadPoint(visualLane, 0.91);
+        const sliding = slideTimer > 0;
+        const bodyY = point.y - 37 - jumpHeight;
+        ctx.save();
+        ctx.translate(point.x, bodyY);
+        ctx.shadowBlur = 22;
+        ctx.shadowColor = '#42e8e0';
+        ctx.strokeStyle = '#eaffff';
+        ctx.fillStyle = '#42e8e0';
+        ctx.lineWidth = 8;
+        ctx.lineCap = 'round';
+
+        if (sliding) {
+          ctx.beginPath();
+          ctx.moveTo(-26, 13);
+          ctx.lineTo(25, 13);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.arc(25, -2, 12, 0, Math.PI * 2);
+          ctx.fill();
+        } else {
+          ctx.beginPath();
+          ctx.arc(0, -45, 13, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.beginPath();
+          ctx.moveTo(0, -30);
+          ctx.lineTo(0, 7);
+          ctx.moveTo(0, -18);
+          ctx.lineTo(-23, -1);
+          ctx.moveTo(0, -18);
+          ctx.lineTo(23, -1);
+          ctx.moveTo(0, 7);
+          ctx.lineTo(-17, 35);
+          ctx.moveTo(0, 7);
+          ctx.lineTo(18, 35);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+
+      function draw() {
+        drawBackground();
+        [...objects].sort((a, b) => a.progress - b.progress).forEach(drawObject);
+        particles.forEach((particle) => {
+          ctx.globalAlpha = Math.max(0, particle.life * 2);
+          ctx.fillStyle = '#ffd166';
+          ctx.fillRect(particle.x - 3, particle.y - 3, 6, 6);
+        });
+        ctx.globalAlpha = 1;
+        drawPlayer();
+
+        ctx.fillStyle = 'rgba(7, 10, 18, 0.7)';
+        ctx.fillRect(18, 18, 150, 42);
+        ctx.fillStyle = '#42e8e0';
+        ctx.font = '800 18px sans-serif';
+        ctx.fillText(`SPEED ${Math.round(speed * 100)}`, 32, 46);
+      }
+
+      function loop(now) {
+        const delta = Math.min((now - lastTime) / 1000, 0.035);
+        lastTime = now;
+        if (running && document.body.dataset.activeGame === 'temple') update(delta);
+        if (document.body.dataset.activeGame === 'temple') draw();
+        requestAnimationFrame(loop);
+      }
+
+      function handleControl(control) {
+        if (control === 'left') move(-1);
+        else if (control === 'right') move(1);
+        else if (control === 'up') jump();
+        else if (control === 'down') slide();
+      }
+
+      window.addEventListener('keydown', (event) => {
+        if (document.body.dataset.activeGame !== 'temple') return;
+        const key = event.key.toLowerCase();
+        if (['a', 'd', 'w', 's', 'arrowleft', 'arrowright', 'arrowup', 'arrowdown', ' ', 'p'].includes(key)) event.preventDefault();
+        if (event.repeat && key !== 'p') return;
+        if (key === 'a' || key === 'arrowleft') move(-1);
+        else if (key === 'd' || key === 'arrowright') move(1);
+        else if (key === 'w' || key === 'arrowup' || key === ' ') jump();
+        else if (key === 's' || key === 'arrowdown') slide();
+        else if (key === 'p') running ? togglePause() : startGame();
+      });
+
+      touchButtons.forEach((button) => {
+        button.addEventListener('pointerdown', (event) => {
+          event.preventDefault();
+          handleControl(button.dataset.templeControl);
+        });
+      });
+      startButton.addEventListener('click', () => running ? togglePause() : startGame());
+      restartButton.addEventListener('click', resetGame);
+      window.addEventListener('gamechange', (event) => {
+        if (event.detail !== 'temple' && running) togglePause();
+      });
+      document.addEventListener('visibilitychange', () => {
+        if (document.hidden && running) togglePause();
+      });
+
+      resetGame();
       requestAnimationFrame(loop);
     })();
   </script>
