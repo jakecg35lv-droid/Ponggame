@@ -369,6 +369,104 @@
     .dash-control.right { grid-column: 3; grid-row: 2; }
     .dash-control.action { color: #04100f; background: var(--cyan); border-color: var(--cyan); }
 
+    .temple-shell {
+      --temple-gold: #ffcf66;
+      --temple-green: #55f2a4;
+      background:
+        radial-gradient(circle at 50% -20%, rgba(255, 207, 102, 0.12), transparent 42%),
+        rgba(11, 18, 26, 0.92);
+    }
+
+    .temple-hud { flex-wrap: wrap; justify-content: flex-end; }
+    .temple-hud .score { font-size: clamp(1rem, 2.4vw, 1.4rem); }
+
+    .temple-stage { position: relative; }
+
+    .temple-status {
+      position: absolute;
+      z-index: 2;
+      top: 14px;
+      left: 14px;
+      display: grid;
+      gap: 7px;
+      width: min(270px, calc(100% - 28px));
+      pointer-events: none;
+    }
+
+    .temple-chip {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-height: 31px;
+      padding: 6px 10px;
+      overflow: hidden;
+      color: #eef8f4;
+      background: rgba(4, 12, 14, 0.72);
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      border-radius: 9px;
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+      backdrop-filter: blur(8px);
+      font-size: 0.68rem;
+      font-weight: 850;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    .temple-chip strong { color: var(--temple-gold); margin-left: auto; }
+    .temple-chip.power { color: #b7fff0; border-color: rgba(85, 242, 164, 0.36); }
+
+    .temple-meter {
+      width: 76px;
+      height: 6px;
+      overflow: hidden;
+      background: rgba(255, 255, 255, 0.12);
+      border-radius: 999px;
+    }
+
+    .temple-meter > span {
+      display: block;
+      width: 0;
+      height: 100%;
+      background: linear-gradient(90deg, #55f2a4, #42e8e0);
+      box-shadow: 0 0 10px #55f2a4;
+      transition: width 120ms linear;
+    }
+
+    .temple-mission {
+      margin: 0 0 14px;
+      padding: 10px 12px;
+      color: var(--muted);
+      background: rgba(255, 255, 255, 0.035);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      font-size: 0.78rem;
+    }
+
+    .temple-mission strong { color: var(--temple-gold); }
+    .temple-mission.completed { border-color: rgba(85, 242, 164, 0.5); color: #b7ffd9; }
+
+    .temple-toast {
+      position: absolute;
+      z-index: 3;
+      top: 22%;
+      left: 50%;
+      padding: 9px 14px;
+      color: #07110d;
+      background: var(--temple-gold);
+      border-radius: 999px;
+      box-shadow: 0 8px 30px rgba(255, 207, 102, 0.35);
+      font-size: 0.72rem;
+      font-weight: 900;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      transform: translate(-50%, -12px);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 160ms ease, transform 160ms ease;
+    }
+
+    .temple-toast.show { opacity: 1; transform: translate(-50%, 0); }
+
     @media (max-width: 640px) {
       body { padding: 10px; }
       .arcade-nav { align-items: stretch; flex-direction: column; }
@@ -388,6 +486,9 @@
       .runner-controls { width: 100%; }
       .runner-control { min-width: 0; flex: 1; }
       .dash-controls { align-self: center; }
+      .temple-status { top: 8px; left: 8px; width: 205px; }
+      .temple-chip { min-height: 27px; padding: 5px 8px; font-size: 0.58rem; }
+      .temple-meter { width: 54px; }
     }
 
     @media (prefers-reduced-motion: reduce) {
@@ -406,7 +507,7 @@
         <button type="button" data-game-link="reaction">Reaction Test</button>
         <button type="button" data-game-link="memory">Memory Match</button>
         <button type="button" data-game-link="runner">Hill Runner</button>
-        <button type="button" data-game-link="temple">Temple Dash</button>
+        <button type="button" data-game-link="temple">Relic Rush</button>
       </div>
     </nav>
 
@@ -605,29 +706,38 @@
     </footer>
   </main>
 
-  <main class="game-shell" data-game-panel="temple" hidden>
+  <main class="game-shell temple-shell" data-game-panel="temple" hidden>
     <header class="topbar">
-      <h1 class="brand">Neon Temple <span>Dash</span></h1>
-      <div class="scoreboard" aria-live="polite">
+      <h1 class="brand">Temple <span>Relic Rush</span></h1>
+      <div class="scoreboard temple-hud" aria-live="polite">
         <span>Distance</span><strong class="score" id="templeDistance">0m</strong>
         <span>Coins</span><strong class="score" id="templeCoins">0</strong>
-        <span>Level</span><strong class="score" id="templeLevel">1</strong>
-        <span>Best</span><strong class="score" id="templeBest">0m</strong>
+        <span>Score</span><strong class="score" id="templeScore">0</strong>
+        <span>Zone</span><strong class="score" id="templeLevel">1</strong>
+        <span>Best</span><strong class="score" id="templeBest">0</strong>
       </div>
     </header>
 
-    <div class="canvas-wrap">
-      <canvas id="templeGame" width="1000" height="600" aria-label="Neon Temple Dash endless runner game area"></canvas>
+    <div class="canvas-wrap temple-stage">
+      <canvas id="templeGame" width="1000" height="600" aria-label="Temple Relic Rush endless runner game area"></canvas>
+      <div class="temple-status" aria-hidden="true">
+        <div class="temple-chip"><span>Multiplier</span><strong id="templeMultiplier">x1</strong></div>
+        <div class="temple-chip"><span>Relic shards</span><strong id="templeRelics">0 / 3</strong></div>
+        <div class="temple-chip power"><span id="templePowerLabel">No power-up</span><div class="temple-meter"><span id="templePowerMeter"></span></div></div>
+      </div>
+      <div class="temple-toast" id="templeToast" role="status" aria-live="polite"></div>
       <div class="overlay" id="templeOverlay">
         <div class="overlay-card">
-          <h2 id="templeOverlayTitle">Enter the temple</h2>
-          <p id="templeOverlayText">Dodge traps, collect coins, and run as far as you can.</p>
+          <h2 id="templeOverlayTitle">The idol is awake</h2>
+          <p id="templeOverlayText">Chain moves, collect relics, and survive the shifting ruins.</p>
         </div>
       </div>
     </div>
 
+    <p class="temple-mission" id="templeMission"><strong>Mission:</strong> Collect 12 coins in one run.</p>
+
     <footer class="controls">
-      <p class="hint"><strong>Move:</strong> A / D or ← / → lanes · W / ↑ / Space jump · S / ↓ slide · P pause</p>
+      <p class="hint"><strong>Move:</strong> A / D or ← / → lanes · W / ↑ / Space jump · S / ↓ slide · swipe on the game · P pause<br><strong>Survive:</strong> Jump barriers, slide under arches, avoid boulders, and collect shields, magnets, and relic shards.</p>
       <div class="dash-controls" aria-label="Temple Dash touch controls">
         <button class="dash-control up action" type="button" data-temple-control="up" aria-label="Jump">Jump</button>
         <button class="dash-control left" type="button" data-temple-control="left" aria-label="Move left">Left</button>
@@ -2447,6 +2557,7 @@
     (() => {
       'use strict';
 
+      return; // Replaced by the advanced Temple Relic Rush engine below.
       const canvas = document.getElementById('templeGame');
       const ctx = canvas.getContext('2d');
       const distanceElement = document.getElementById('templeDistance');
@@ -2872,6 +2983,699 @@
       });
       document.addEventListener('visibilitychange', () => {
         if (document.hidden && running) togglePause();
+      });
+
+      resetGame();
+      requestAnimationFrame(loop);
+    })();
+  </script>
+  <script>
+    (() => {
+      'use strict';
+
+      const canvas = document.getElementById('templeGame');
+      const ctx = canvas.getContext('2d');
+      const ui = {
+        distance: document.getElementById('templeDistance'),
+        coins: document.getElementById('templeCoins'),
+        score: document.getElementById('templeScore'),
+        level: document.getElementById('templeLevel'),
+        best: document.getElementById('templeBest'),
+        multiplier: document.getElementById('templeMultiplier'),
+        relics: document.getElementById('templeRelics'),
+        powerLabel: document.getElementById('templePowerLabel'),
+        powerMeter: document.getElementById('templePowerMeter'),
+        mission: document.getElementById('templeMission'),
+        toast: document.getElementById('templeToast'),
+        overlay: document.getElementById('templeOverlay'),
+        overlayTitle: document.getElementById('templeOverlayTitle'),
+        overlayText: document.getElementById('templeOverlayText'),
+        start: document.getElementById('templeStartButton'),
+        restart: document.getElementById('templeRestartButton')
+      };
+
+      const W = canvas.width;
+      const H = canvas.height;
+      const HORIZON = 132;
+      const LANES = [-1, 0, 1];
+      const STORAGE_KEY = 'templeRelicRushBestV2';
+      const THEMES = [
+        { name: 'Jungle Ruins', sky: ['#06191c', '#123a35', '#081411'], road: '#18251f', glow: '#55f2a4', fog: '#b5ffd8' },
+        { name: 'Ember Vault', sky: ['#210911', '#5a1d18', '#160b0b'], road: '#2a1715', glow: '#ff8c42', fog: '#ffd0a8' },
+        { name: 'Moon Shrine', sky: ['#090927', '#1e2258', '#0b1022'], road: '#171a32', glow: '#8ea8ff', fog: '#cbd6ff' }
+      ];
+      const MISSIONS = [
+        { label: 'Collect 12 coins in one run', key: 'coins', goal: 12 },
+        { label: 'Dodge 20 traps in one run', key: 'dodges', goal: 20 },
+        { label: 'Run 1,000 meters', key: 'distance', goal: 1000 },
+        { label: 'Collect 3 power-ups', key: 'powers', goal: 3 }
+      ];
+
+      let state;
+      let lastTime = performance.now();
+      let toastTimer = 0;
+      let swipeStart = null;
+      let audioContext = null;
+
+      function readBest() {
+        try { return Number(localStorage.getItem(STORAGE_KEY)) || 0; }
+        catch (error) { return 0; }
+      }
+
+      function writeBest(value) {
+        try { localStorage.setItem(STORAGE_KEY, String(value)); }
+        catch (error) { /* Local storage is an enhancement, not a requirement. */ }
+      }
+
+      function freshState() {
+        return {
+          running: false,
+          ended: false,
+          lane: 0,
+          visualLane: 0,
+          jumpY: 0,
+          jumpV: 0,
+          slide: 0,
+          distance: 0,
+          coins: 0,
+          score: 0,
+          best: readBest(),
+          combo: 0,
+          multiplier: 1,
+          dodges: 0,
+          powers: 0,
+          relics: 0,
+          zone: 1,
+          speed: 0.285,
+          spawnTimer: 0.5,
+          objects: [],
+          particles: [],
+          shield: 0,
+          magnet: 0,
+          boost: 0,
+          invulnerable: 0,
+          shake: 0,
+          flash: 0,
+          missionIndex: 0,
+          missionDone: false,
+          runTime: 0
+        };
+      }
+
+      function beep(frequency, duration = 0.07, volume = 0.035) {
+        try {
+          audioContext ||= new (window.AudioContext || window.webkitAudioContext)();
+          const oscillator = audioContext.createOscillator();
+          const gain = audioContext.createGain();
+          oscillator.type = 'triangle';
+          oscillator.frequency.value = frequency;
+          gain.gain.setValueAtTime(volume, audioContext.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.0001, audioContext.currentTime + duration);
+          oscillator.connect(gain).connect(audioContext.destination);
+          oscillator.start();
+          oscillator.stop(audioContext.currentTime + duration);
+        } catch (error) { /* Audio feedback remains optional. */ }
+      }
+
+      function showToast(message, seconds = 1.2) {
+        ui.toast.textContent = message;
+        ui.toast.classList.add('show');
+        toastTimer = seconds;
+      }
+
+      function setOverlay(title, text, visible = true) {
+        ui.overlayTitle.textContent = title;
+        ui.overlayText.textContent = text;
+        ui.overlay.classList.toggle('hidden', !visible);
+      }
+
+      function missionProgress() {
+        const mission = MISSIONS[state.missionIndex];
+        return mission.key === 'distance' ? Math.floor(state.distance) : state[mission.key];
+      }
+
+      function updateHud() {
+        const activePower = state.shield > 0 ? ['Shield', state.shield, 8]
+          : state.magnet > 0 ? ['Coin magnet', state.magnet, 8]
+            : state.boost > 0 ? ['Relic boost', state.boost, 6] : ['No power-up', 0, 1];
+        const mission = MISSIONS[state.missionIndex];
+        const progress = Math.min(mission.goal, missionProgress());
+        ui.distance.textContent = `${Math.floor(state.distance)}m`;
+        ui.coins.textContent = state.coins;
+        ui.score.textContent = Math.floor(state.score).toLocaleString();
+        ui.level.textContent = state.zone;
+        ui.best.textContent = Math.max(state.best, Math.floor(state.score)).toLocaleString();
+        ui.multiplier.textContent = `x${state.multiplier}`;
+        ui.relics.textContent = `${state.relics % 3} / 3`;
+        ui.powerLabel.textContent = activePower[0];
+        ui.powerMeter.style.width = `${Math.max(0, Math.min(100, activePower[1] / activePower[2] * 100))}%`;
+        ui.mission.innerHTML = `<strong>Mission:</strong> ${mission.label} &nbsp; ${progress}/${mission.goal}`;
+        ui.mission.classList.toggle('completed', state.missionDone);
+      }
+
+      function roadPoint(lane, progress) {
+        const p = Math.max(0, progress);
+        const eased = p * p;
+        const half = 66 + eased * 430;
+        return {
+          x: W / 2 + lane * half * 0.59,
+          y: HORIZON + eased * (H - HORIZON + 42),
+          scale: 0.105 + eased * 1.15,
+          half
+        };
+      }
+
+      function resetGame() {
+        state = freshState();
+        ui.start.textContent = 'Start';
+        setOverlay('The idol is awake', 'Chain moves, collect relics, and survive the shifting ruins.');
+        updateHud();
+        draw();
+      }
+
+      function startGame() {
+        if (state.ended) resetGame();
+        state.running = true;
+        ui.start.textContent = 'Pause';
+        setOverlay('', '', false);
+        lastTime = performance.now();
+        beep(330);
+      }
+
+      function pauseGame() {
+        if (state.ended) return;
+        state.running = !state.running;
+        ui.start.textContent = state.running ? 'Pause' : 'Resume';
+        setOverlay('Run paused', `Current score: ${Math.floor(state.score).toLocaleString()}`, !state.running);
+        lastTime = performance.now();
+      }
+
+      function ensureRunning() {
+        if (!state.running && !state.ended) startGame();
+        return state.running;
+      }
+
+      function move(direction) {
+        if (!ensureRunning()) return;
+        const next = Math.max(-1, Math.min(1, state.lane + direction));
+        if (next !== state.lane) {
+          state.lane = next;
+          beep(190 + next * 25, 0.035, 0.018);
+        }
+      }
+
+      function jump() {
+        if (!ensureRunning()) return;
+        if (state.jumpY <= 1 && state.slide <= 0) {
+          state.jumpV = 805;
+          beep(420, 0.08, 0.025);
+        }
+      }
+
+      function slide() {
+        if (!ensureRunning()) return;
+        if (state.jumpY < 18) {
+          state.slide = 0.78;
+          beep(245, 0.07, 0.024);
+        }
+      }
+
+      function addObject(type, lane, delay = 0, extras = {}) {
+        state.objects.push({ type, lane, progress: -delay, checked: false, ...extras });
+      }
+
+      function coinTrail(lane, count = 5, delay = 0, airborne = false) {
+        for (let i = 0; i < count; i += 1) {
+          addObject('coin', lane, delay + i * 0.105, { airborne: airborne && i > 0 && i < count - 1 });
+        }
+      }
+
+      function spawnPattern() {
+        const difficulty = Math.min(1, state.distance / 4200);
+        const roll = Math.random();
+        const shuffled = [...LANES].sort(() => Math.random() - 0.5);
+        const safe = shuffled[0];
+
+        if (roll < 0.2) {
+          addObject('barrier', shuffled[1]);
+          coinTrail(safe, 6, 0.03, true);
+        } else if (roll < 0.39) {
+          addObject('arch', shuffled[1]);
+          coinTrail(safe, 5);
+        } else if (roll < 0.58) {
+          addObject('boulder', shuffled[1]);
+          if (difficulty > 0.18) addObject(Math.random() < 0.5 ? 'barrier' : 'arch', shuffled[2], 0.015);
+          coinTrail(safe, 6);
+        } else if (roll < 0.73) {
+          addObject('barrier', safe);
+          coinTrail(safe, 5, 0.04, true);
+          addObject('boulder', shuffled[1], 0.42);
+        } else if (roll < 0.88) {
+          const zig = Math.random() < 0.5 ? [-1, 0, 1] : [1, 0, -1];
+          zig.forEach((lane, index) => coinTrail(lane, 2, index * 0.2));
+          addObject('arch', zig[2], 0.64);
+        } else {
+          addObject(Math.random() < 0.5 ? 'shield' : 'magnet', safe, 0.12);
+          addObject('boulder', shuffled[1]);
+          coinTrail(safe, 4, 0.3);
+        }
+
+        if (Math.random() < 0.075 + difficulty * 0.04) addObject('relic', safe, 0.48, { airborne: true });
+        if (state.distance > 900 && Math.random() < 0.045) addObject('boost', safe, 0.28);
+      }
+
+      function burst(object, color, amount = 10) {
+        const point = roadPoint(object.lane, Math.min(0.9, object.progress));
+        for (let i = 0; i < amount; i += 1) {
+          state.particles.push({
+            x: point.x,
+            y: point.y - 35,
+            vx: (Math.random() - 0.5) * 210,
+            vy: -55 - Math.random() * 155,
+            life: 0.45 + Math.random() * 0.4,
+            color,
+            size: 3 + Math.random() * 4
+          });
+        }
+      }
+
+      function collect(object) {
+        object.collected = true;
+        if (object.type === 'coin') {
+          state.coins += 1;
+          state.combo += 1;
+          state.score += 35 * state.multiplier;
+          burst(object, '#ffcf66', 7);
+          beep(560 + Math.min(260, state.combo * 12), 0.045, 0.025);
+        } else if (object.type === 'relic') {
+          state.relics += 1;
+          state.score += 350 * state.multiplier;
+          burst(object, '#d7b4ff', 18);
+          showToast('Relic shard +1');
+          beep(740, 0.16, 0.045);
+          if (state.relics % 3 === 0) {
+            state.shield = Math.max(state.shield, 8);
+            state.score += 1000;
+            showToast('Relic complete · shield charged', 1.8);
+          }
+        } else {
+          state[object.type] = object.type === 'boost' ? 6 : 8;
+          state.powers += 1;
+          burst(object, object.type === 'shield' ? '#55f2a4' : object.type === 'magnet' ? '#42e8e0' : '#ff8c42', 16);
+          showToast(`${object.type === 'boost' ? 'Relic boost' : object.type} activated`);
+          beep(660, 0.14, 0.04);
+        }
+      }
+
+      function failRun() {
+        state.running = false;
+        state.ended = true;
+        const finalScore = Math.floor(state.score);
+        if (finalScore > state.best) {
+          state.best = finalScore;
+          writeBest(finalScore);
+        }
+        updateHud();
+        ui.start.textContent = 'Run Again';
+        setOverlay('The guardian caught you', `${Math.floor(state.distance)}m · ${state.coins} coins · ${finalScore.toLocaleString()} points`);
+        beep(92, 0.42, 0.06);
+      }
+
+      function hitObstacle(object) {
+        if (state.invulnerable > 0) return;
+        if (state.shield > 0) {
+          state.shield = 0;
+          state.invulnerable = 1.1;
+          state.combo = 0;
+          state.shake = 0.45;
+          object.collected = true;
+          burst(object, '#55f2a4', 24);
+          showToast('Shield saved the run', 1.5);
+          beep(130, 0.18, 0.06);
+        } else {
+          state.shake = 0.7;
+          failRun();
+        }
+      }
+
+      function checkMission() {
+        if (state.missionDone || missionProgress() < MISSIONS[state.missionIndex].goal) return;
+        state.missionDone = true;
+        state.score += 1500;
+        showToast('Mission complete · +1,500', 1.8);
+        beep(880, 0.2, 0.045);
+        window.setTimeout(() => {
+          if (!state || state.ended) return;
+          state.missionIndex = (state.missionIndex + 1) % MISSIONS.length;
+          state.missionDone = false;
+          updateHud();
+        }, 1900);
+      }
+
+      function update(delta) {
+        state.runTime += delta;
+        state.zone = Math.min(30, Math.floor(state.distance / 700) + 1);
+        const baseSpeed = Math.min(0.79, 0.285 + state.distance * 0.000075 + (state.zone - 1) * 0.006);
+        state.speed = baseSpeed * (state.boost > 0 ? 1.18 : 1);
+        state.distance += state.speed * delta * 82;
+        state.multiplier = 1 + Math.min(4, Math.floor(state.combo / 8));
+        state.score += state.speed * delta * 95 * state.multiplier * (state.boost > 0 ? 2 : 1);
+        state.visualLane += (state.lane - state.visualLane) * Math.min(1, delta * 14);
+
+        if (state.jumpV !== 0 || state.jumpY > 0) {
+          state.jumpY += state.jumpV * delta;
+          state.jumpV -= 1740 * delta;
+          if (state.jumpY <= 0) { state.jumpY = 0; state.jumpV = 0; }
+        }
+        state.slide = Math.max(0, state.slide - delta);
+        state.shield = Math.max(0, state.shield - delta);
+        state.magnet = Math.max(0, state.magnet - delta);
+        state.boost = Math.max(0, state.boost - delta);
+        state.invulnerable = Math.max(0, state.invulnerable - delta);
+        state.shake = Math.max(0, state.shake - delta);
+        state.flash = Math.max(0, state.flash - delta);
+
+        state.spawnTimer -= delta;
+        if (state.spawnTimer <= 0) {
+          spawnPattern();
+          state.spawnTimer = Math.max(0.74, 1.42 - state.zone * 0.018) + Math.random() * 0.26;
+        }
+
+        state.objects.forEach((object) => {
+          object.progress += state.speed * delta;
+          const laneMatch = object.lane === state.lane;
+          const collectible = ['coin', 'relic', 'shield', 'magnet', 'boost'].includes(object.type);
+          if (collectible && !object.checked && object.progress > 0.7 && (laneMatch || (state.magnet > 0 && object.type === 'coin'))) {
+            object.checked = true;
+            collect(object);
+            return;
+          }
+          if (!object.checked && object.progress >= 0.835) {
+            object.checked = true;
+            if (!laneMatch || collectible) return;
+            const avoided = object.type === 'barrier' ? state.jumpY > 62
+              : object.type === 'arch' ? state.slide > 0
+                : false;
+            if (avoided) {
+              state.dodges += 1;
+              state.combo += 2;
+              state.score += 90 * state.multiplier;
+            } else hitObstacle(object);
+          }
+        });
+        state.objects = state.objects.filter((object) => object.progress < 1.14 && !object.collected);
+
+        state.particles.forEach((particle) => {
+          particle.x += particle.vx * delta;
+          particle.y += particle.vy * delta;
+          particle.vy += 390 * delta;
+          particle.life -= delta;
+        });
+        state.particles = state.particles.filter((particle) => particle.life > 0);
+        toastTimer -= delta;
+        if (toastTimer <= 0) ui.toast.classList.remove('show');
+        checkMission();
+        updateHud();
+      }
+
+      function drawBackground() {
+        const theme = THEMES[Math.floor((state.zone - 1) / 2) % THEMES.length];
+        const gradient = ctx.createLinearGradient(0, 0, 0, H);
+        gradient.addColorStop(0, theme.sky[0]);
+        gradient.addColorStop(0.58, theme.sky[1]);
+        gradient.addColorStop(1, theme.sky[2]);
+        ctx.fillStyle = gradient;
+        ctx.fillRect(0, 0, W, H);
+
+        ctx.globalAlpha = 0.16;
+        ctx.fillStyle = theme.fog;
+        ctx.beginPath();
+        ctx.arc(W / 2, HORIZON - 15, 90, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+
+        for (let i = 0; i < 8; i += 1) {
+          const side = i < 4 ? -1 : 1;
+          const rank = i % 4;
+          const x = W / 2 + side * (115 + rank * 128);
+          const h = 86 + (rank % 2) * 55;
+          ctx.fillStyle = 'rgba(3, 9, 10, 0.86)';
+          ctx.fillRect(x - 34, HORIZON - h, 68, h + 20);
+          ctx.fillStyle = theme.glow;
+          ctx.globalAlpha = 0.16;
+          ctx.fillRect(x - 12, HORIZON - h + 22, 24, 10);
+          ctx.globalAlpha = 1;
+        }
+
+        ctx.fillStyle = theme.road;
+        ctx.beginPath();
+        ctx.moveTo(W / 2 - 66, HORIZON);
+        ctx.lineTo(W / 2 + 66, HORIZON);
+        ctx.lineTo(W + 52, H);
+        ctx.lineTo(-52, H);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.strokeStyle = theme.glow;
+        ctx.globalAlpha = 0.28;
+        ctx.lineWidth = 3;
+        [-1.5, -0.5, 0.5, 1.5].forEach((divider) => {
+          const top = roadPoint(divider / 1.5, 0);
+          const bottom = roadPoint(divider / 1.5, 1);
+          ctx.beginPath();
+          ctx.moveTo(top.x, HORIZON);
+          ctx.lineTo(bottom.x, H);
+          ctx.stroke();
+        });
+        const offset = (state.distance * 0.026) % 0.105;
+        for (let p = offset; p < 1; p += 0.105) {
+          const point = roadPoint(0, p);
+          ctx.globalAlpha = 0.07 + p * 0.22;
+          ctx.beginPath();
+          ctx.moveTo(W / 2 - point.half, point.y);
+          ctx.lineTo(W / 2 + point.half, point.y);
+          ctx.stroke();
+        }
+        ctx.globalAlpha = 1;
+
+        ctx.fillStyle = 'rgba(0,0,0,0.48)';
+        ctx.beginPath();
+        ctx.arc(W / 2, HORIZON + 16, 27, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillRect(W / 2 - 19, HORIZON + 16, 38, 64);
+        ctx.fillStyle = theme.glow;
+        ctx.globalAlpha = 0.65;
+        ctx.beginPath();
+        ctx.arc(W / 2 - 9, HORIZON + 10, 3, 0, Math.PI * 2);
+        ctx.arc(W / 2 + 9, HORIZON + 10, 3, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+
+      function drawObject(object) {
+        if (object.progress < 0) return;
+        const point = roadPoint(object.lane, object.progress);
+        const size = 45 * point.scale;
+        const hover = object.airborne ? -size * 0.9 : 0;
+        ctx.save();
+        ctx.translate(point.x, point.y + hover);
+
+        if (object.type === 'coin') {
+          const squash = 0.18 + Math.abs(Math.sin(state.runTime * 8 + object.progress * 5)) * 0.24;
+          ctx.shadowBlur = 18 * point.scale;
+          ctx.shadowColor = '#ffcf66';
+          ctx.fillStyle = '#ffcf66';
+          ctx.beginPath();
+          ctx.ellipse(0, -size * 0.76, size * squash, size * 0.48, 0, 0, Math.PI * 2);
+          ctx.fill();
+        } else if (object.type === 'relic') {
+          ctx.rotate(state.runTime * 1.8);
+          ctx.shadowBlur = 24 * point.scale;
+          ctx.shadowColor = '#d7b4ff';
+          ctx.fillStyle = '#b680ff';
+          ctx.beginPath();
+          ctx.moveTo(0, -size * 1.4);
+          ctx.lineTo(size * 0.52, -size * 0.72);
+          ctx.lineTo(0, 0);
+          ctx.lineTo(-size * 0.52, -size * 0.72);
+          ctx.closePath();
+          ctx.fill();
+        } else if (['shield', 'magnet', 'boost'].includes(object.type)) {
+          const color = object.type === 'shield' ? '#55f2a4' : object.type === 'magnet' ? '#42e8e0' : '#ff8c42';
+          ctx.shadowBlur = 24 * point.scale;
+          ctx.shadowColor = color;
+          ctx.strokeStyle = color;
+          ctx.fillStyle = 'rgba(5, 15, 18, 0.8)';
+          ctx.lineWidth = Math.max(2, size * 0.13);
+          ctx.beginPath();
+          ctx.arc(0, -size * 0.8, size * 0.58, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+          ctx.fillStyle = color;
+          ctx.font = `900 ${Math.max(6, size * 0.68)}px sans-serif`;
+          ctx.textAlign = 'center';
+          ctx.fillText(object.type === 'shield' ? 'S' : object.type === 'magnet' ? 'M' : '2X', 0, -size * 0.59);
+        } else if (object.type === 'barrier') {
+          ctx.fillStyle = '#ffb347';
+          ctx.shadowBlur = 15 * point.scale;
+          ctx.shadowColor = '#ff8c42';
+          ctx.fillRect(-size * 0.78, -size * 0.72, size * 1.56, size * 0.72);
+          ctx.fillStyle = '#5d210b';
+          ctx.fillRect(-size * 0.64, -size * 0.52, size * 1.28, size * 0.13);
+        } else if (object.type === 'arch') {
+          ctx.strokeStyle = '#c89cff';
+          ctx.shadowBlur = 18 * point.scale;
+          ctx.shadowColor = '#9c6bff';
+          ctx.lineWidth = Math.max(3, size * 0.22);
+          ctx.beginPath();
+          ctx.moveTo(-size * 0.72, 0);
+          ctx.lineTo(-size * 0.72, -size * 1.42);
+          ctx.lineTo(size * 0.72, -size * 1.42);
+          ctx.lineTo(size * 0.72, 0);
+          ctx.stroke();
+        } else {
+          const wobble = Math.sin(state.runTime * 6 + object.progress) * 0.08;
+          ctx.rotate(wobble);
+          ctx.fillStyle = '#53605a';
+          ctx.shadowBlur = 14 * point.scale;
+          ctx.shadowColor = '#151b18';
+          ctx.beginPath();
+          ctx.arc(0, -size * 0.64, size * 0.72, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = '#2b312e';
+          ctx.lineWidth = Math.max(2, size * 0.08);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+
+      function drawPlayer() {
+        const point = roadPoint(state.visualLane, 0.91);
+        const sliding = state.slide > 0;
+        const blink = state.invulnerable > 0 && Math.floor(state.invulnerable * 12) % 2 === 0;
+        ctx.save();
+        ctx.globalAlpha = blink ? 0.32 : 1;
+        ctx.translate(point.x, point.y - 38 - state.jumpY);
+        if (state.shield > 0) {
+          ctx.strokeStyle = '#55f2a4';
+          ctx.lineWidth = 4;
+          ctx.shadowBlur = 18;
+          ctx.shadowColor = '#55f2a4';
+          ctx.beginPath();
+          ctx.ellipse(0, -17, 45, 62, 0, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        ctx.shadowBlur = 19;
+        ctx.shadowColor = '#ffcf66';
+        ctx.strokeStyle = '#fff6dc';
+        ctx.fillStyle = '#ffcf66';
+        ctx.lineWidth = 8;
+        ctx.lineCap = 'round';
+        if (sliding) {
+          ctx.beginPath();
+          ctx.moveTo(-27, 14);
+          ctx.lineTo(25, 14);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.arc(25, -1, 12, 0, Math.PI * 2);
+          ctx.fill();
+        } else {
+          const stride = Math.sin(state.runTime * 15) * 13;
+          ctx.beginPath();
+          ctx.arc(0, -45, 13, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.beginPath();
+          ctx.moveTo(0, -31); ctx.lineTo(0, 7);
+          ctx.moveTo(0, -18); ctx.lineTo(-23, -2 - stride * 0.2);
+          ctx.moveTo(0, -18); ctx.lineTo(23, -2 + stride * 0.2);
+          ctx.moveTo(0, 7); ctx.lineTo(-18, 35 + stride);
+          ctx.moveTo(0, 7); ctx.lineTo(18, 35 - stride);
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+
+      function draw() {
+        ctx.save();
+        if (state.shake > 0) ctx.translate((Math.random() - 0.5) * state.shake * 22, (Math.random() - 0.5) * state.shake * 12);
+        drawBackground();
+        [...state.objects].sort((a, b) => a.progress - b.progress).forEach(drawObject);
+        state.particles.forEach((particle) => {
+          ctx.globalAlpha = Math.max(0, particle.life * 1.8);
+          ctx.fillStyle = particle.color;
+          ctx.fillRect(particle.x - particle.size / 2, particle.y - particle.size / 2, particle.size, particle.size);
+        });
+        ctx.globalAlpha = 1;
+        drawPlayer();
+        ctx.restore();
+
+        const theme = THEMES[Math.floor((state.zone - 1) / 2) % THEMES.length];
+        ctx.fillStyle = 'rgba(2, 8, 10, 0.7)';
+        ctx.fillRect(W - 194, 18, 176, 44);
+        ctx.fillStyle = theme.glow;
+        ctx.font = '800 16px sans-serif';
+        ctx.textAlign = 'right';
+        ctx.fillText(theme.name.toUpperCase(), W - 30, 46);
+        ctx.textAlign = 'left';
+      }
+
+      function loop(now) {
+        const delta = Math.min((now - lastTime) / 1000, 0.034);
+        lastTime = now;
+        if (state.running && document.body.dataset.activeGame === 'temple') update(delta);
+        if (document.body.dataset.activeGame === 'temple') draw();
+        requestAnimationFrame(loop);
+      }
+
+      function control(action) {
+        if (action === 'left') move(-1);
+        else if (action === 'right') move(1);
+        else if (action === 'up') jump();
+        else if (action === 'down') slide();
+      }
+
+      window.addEventListener('keydown', (event) => {
+        if (document.body.dataset.activeGame !== 'temple') return;
+        const key = event.key.toLowerCase();
+        if (['a', 'd', 'w', 's', 'arrowleft', 'arrowright', 'arrowup', 'arrowdown', ' ', 'p'].includes(key)) event.preventDefault();
+        if (event.repeat && key !== 'p') return;
+        if (key === 'a' || key === 'arrowleft') move(-1);
+        else if (key === 'd' || key === 'arrowright') move(1);
+        else if (key === 'w' || key === 'arrowup' || key === ' ') jump();
+        else if (key === 's' || key === 'arrowdown') slide();
+        else if (key === 'p') state.running ? pauseGame() : startGame();
+      });
+
+      document.querySelectorAll('[data-temple-control]').forEach((button) => {
+        button.addEventListener('pointerdown', (event) => {
+          event.preventDefault();
+          control(button.dataset.templeControl);
+        });
+      });
+
+      canvas.addEventListener('pointerdown', (event) => {
+        swipeStart = { x: event.clientX, y: event.clientY, id: event.pointerId };
+        canvas.setPointerCapture?.(event.pointerId);
+      });
+      canvas.addEventListener('pointerup', (event) => {
+        if (!swipeStart || swipeStart.id !== event.pointerId) return;
+        const dx = event.clientX - swipeStart.x;
+        const dy = event.clientY - swipeStart.y;
+        swipeStart = null;
+        if (Math.max(Math.abs(dx), Math.abs(dy)) < 24) { jump(); return; }
+        if (Math.abs(dx) > Math.abs(dy)) move(dx > 0 ? 1 : -1);
+        else if (dy < 0) jump();
+        else slide();
+      });
+      canvas.addEventListener('pointercancel', () => { swipeStart = null; });
+
+      ui.start.addEventListener('click', () => state.running ? pauseGame() : startGame());
+      ui.restart.addEventListener('click', resetGame);
+      window.addEventListener('gamechange', (event) => {
+        if (event.detail !== 'temple' && state.running) pauseGame();
+      });
+      document.addEventListener('visibilitychange', () => {
+        if (document.hidden && state.running) pauseGame();
       });
 
       resetGame();
